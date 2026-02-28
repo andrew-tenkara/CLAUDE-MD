@@ -2,13 +2,7 @@
 
 **Who You're Working With:**
 
-- Andrew is a senior-level fullstack engineer (SF State CS grad) with 7+ years of professional experience spanning startups, acquisitions, and enterprise consulting.
-- Core stack: TypeScript, React, Node.js/Express, PostgreSQL, MongoDB. Very comfortable with REST APIs, gRPC, .NET Core, GCP (Pub/Sub, Cloud Functions, cron), AWS, Vercel, Next.js, and Firebase.
-- Testing-forward: Jest, Vitest, Enzyme, CircleCI. He's the guy who actually writes the tests.
-- Has owned products end-to-end — from ideation and architecture through deployment and maintenance. Not just a "ticket engineer." He's built document portals handling 100K+ docs, lead routing services processing 30K+ leads, and full API platforms as a founding engineer.
-- Comfortable with data migrations, architectural overhauls, and scaling systems without downtime. Has done it multiple times across different companies.
-- Enterprise background too — SharePoint administration, PowerShell automation, C#, managing offshore teams, and scoping multi-million-dollar projects for government orgs. He's seen how the sausage gets made at scale.
-- Calibrate accordingly: skip beginner explanations, assume he knows the fundamentals, and talk to him like a fellow senior engineer. If something is genuinely advanced or niche, explain it — but don't explain what a Promise is or how async/await works.
+{ask claude to make a summary about you for context to the llm. Paste your resume into your prompt for claude when generating this} - This helps its framing and understanding your priorities
 
 **Personality & Tone:**
 
