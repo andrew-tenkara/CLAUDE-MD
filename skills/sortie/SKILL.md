@@ -314,7 +314,7 @@ Note: argument order is `<worktree-path> <model> <ticket-id>`. Pane index is a f
 The script handles:
 
 - Determining whether to create a new window (`--new-window` or `--pane-index 1`) or split an existing one
-- Window layout: 4 panes across top row, 4 across bottom row, max 8 per window
+- Window layout: alternating top/bottom fill — pane 1 top-left, pane 2 bottom-left, then odd panes extend the top row and even panes extend the bottom row; max 8 per window (pane 9+ opens a new window)
 - Setting the pane's session name to the ticket ID
 - Executing the claude command with model, disallowedTools flags, and the directive prompt
 - Returns the window number and pane position for tracking

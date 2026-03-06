@@ -4,9 +4,14 @@
 #
 # Pane layout rules:
 #   - Max 8 panes per window
-#   - Panes 1-4: top row (split vertically)
-#   - Panes 5-8: bottom row (split horizontally from top, then vertically)
-#   - Pane 9+: new window
+#   - Pane 1:       top-left (new window; splits horizontally to reserve bottom row)
+#   - Pane 2:       bottom-left (fills the pre-created bottom pane from pane 1)
+#   - Panes 3,5,7:  top row (split vertically from last top pane)
+#   - Panes 4,6,8:  bottom row (split vertically from last bottom pane)
+#   - Pane 9+:      new window
+#
+# Fill order: top-left → bottom-left → top-right → bottom-right → ...
+# Result: 2 agents = top/bottom split; 4 agents = 2×2 grid; 8 agents = 4×2 grid
 #
 # --new-window: force a new iTerm2 window
 # --pane-index: which pane number this is (1-based) — controls split direction
@@ -100,15 +105,7 @@ EOF
   echo "${RESULT}" | cut -d',' -f3 > "$LAST_BOTTOM_FILE"
   echo "SPAWNED:new-window:pane-1:${TICKET_ID}"
 
-elif [ "$PANE_INDEX" -le 4 ]; then
-  # Split last top-row pane vertically; track the new pane as the last top
-  WINDOW_ID=$(cat "$WINDOW_ID_FILE")
-  LAST_TOP_ID=$(cat "$LAST_TOP_FILE")
-  NEW_ID=$(split_session_vertically "$WINDOW_ID" "$LAST_TOP_ID" "${TICKET_ID}" "${CLAUDE_CMD}")
-  echo "$NEW_ID" > "$LAST_TOP_FILE"
-  echo "SPAWNED:split-vertical:pane-${PANE_INDEX}:${TICKET_ID}"
-
-elif [ "$PANE_INDEX" -eq 5 ]; then
+elif [ "$PANE_INDEX" -eq 2 ]; then
   # Use the pre-created empty bottom pane from pane 1's horizontal split
   WINDOW_ID=$(cat "$WINDOW_ID_FILE")
   BOTTOM_ID=$(cat "$LAST_BOTTOM_FILE")
@@ -128,15 +125,23 @@ tell application "iTerm2"
   end tell
 end tell
 EOF
-  echo "SPAWNED:bottom-row:pane-5:${TICKET_ID}"
+  echo "SPAWNED:bottom-left:pane-2:${TICKET_ID}"
 
-elif [ "$PANE_INDEX" -le 8 ]; then
-  # Split last bottom-row pane vertically; track the new pane as the last bottom
+elif [ "$PANE_INDEX" -le 8 ] && [ $(( PANE_INDEX % 2 )) -eq 1 ]; then
+  # Odd panes (3, 5, 7): split last top-row pane vertically
+  WINDOW_ID=$(cat "$WINDOW_ID_FILE")
+  LAST_TOP_ID=$(cat "$LAST_TOP_FILE")
+  NEW_ID=$(split_session_vertically "$WINDOW_ID" "$LAST_TOP_ID" "${TICKET_ID}" "${CLAUDE_CMD}")
+  echo "$NEW_ID" > "$LAST_TOP_FILE"
+  echo "SPAWNED:split-vertical-top:pane-${PANE_INDEX}:${TICKET_ID}"
+
+elif [ "$PANE_INDEX" -le 8 ] && [ $(( PANE_INDEX % 2 )) -eq 0 ]; then
+  # Even panes (4, 6, 8): split last bottom-row pane vertically
   WINDOW_ID=$(cat "$WINDOW_ID_FILE")
   LAST_BOTTOM_ID=$(cat "$LAST_BOTTOM_FILE")
   NEW_ID=$(split_session_vertically "$WINDOW_ID" "$LAST_BOTTOM_ID" "${TICKET_ID}" "${CLAUDE_CMD}")
   echo "$NEW_ID" > "$LAST_BOTTOM_FILE"
-  echo "SPAWNED:split-vertical:pane-${PANE_INDEX}:${TICKET_ID}"
+  echo "SPAWNED:split-vertical-bottom:pane-${PANE_INDEX}:${TICKET_ID}"
 
 else
   osascript <<EOF
