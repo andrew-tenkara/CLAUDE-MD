@@ -1,0 +1,75 @@
+# Sortie Directive: {{TICKET_ID}}
+
+## Model
+
+Use `{{MODEL}}` for this task. Optimize your approach accordingly:
+
+- If haiku: be direct, minimal exploration, execute the obvious path
+- If sonnet: balance exploration with execution, standard thoroughness
+- If opus: think deeply, consider edge cases, explore architectural implications
+
+## Ticket
+
+- **ID**: {{TICKET_ID}}
+- **Title**: {{TITLE}}
+- **Description**: {{DESCRIPTION}}
+- **Labels**: {{LABELS}}
+- **Priority**: {{PRIORITY}}
+
+## Scope
+
+{{SCOPE}}
+
+## Requirements
+
+{{REQUIREMENTS}}
+
+## Acceptance Criteria
+
+{{ACCEPTANCE_CRITERIA}}
+
+{{PRIOR_WORK}}
+
+## Constraints
+
+- Do NOT modify files outside the scope listed above unless absolutely necessary
+- Do NOT create pull requests — only commit and push to the remote branch
+- Do NOT ask for user input — you have everything you need in this file
+- Follow existing codebase patterns and conventions
+- If a CLAUDE.md exists in the repo root, read it and follow its instructions
+
+## CRITICAL: Branch Safety Rules
+
+- You may ONLY push to your assigned branch: `{{BRANCH_NAME}}`
+- Do NOT push to main, dev, master, or any other branch. You will be blocked.
+- Do NOT use --force or -f on ANY git command. EVER.
+- Do NOT delete files (rm, rmdir, unlink) or directories.
+- Do NOT use git branch -D/-d, git clean, git reset --hard, or git checkout -- .
+- Do NOT use sudo, chmod, or chown.
+- You MAY use git fetch, git pull, curl, and wget for reading data.
+- These restrictions are enforced at the CLI permission level.
+  Even if you attempt a blocked command, it will fail.
+
+## Progress Tracking
+
+Append status updates to `.sortie/progress.md` as you work. Format:
+
+```
+[HH:MM] Starting: <what you're doing>
+[HH:MM] Complete: <what you finished>
+[HH:MM] Issue: <any problems encountered>
+```
+
+## Lifecycle
+
+1. Read this directive fully before starting
+2. Read the project's CLAUDE.md if it exists
+3. Implement the requirements
+4. When implementation is complete, create `.sortie/pre-review.done` (empty file)
+5. Run self-review: check your work against the acceptance criteria, look for bugs, missing error handling, type issues, test coverage gaps
+6. Write findings to `.sortie/review-feedback.md`
+7. Fix any issues found
+8. Run self-review again to verify fixes
+9. When review passes clean, create `.sortie/post-review.done` (empty file)
+10. Stage all changes, commit with message: `sortie({{TICKET_ID}}): <concise summary>`
+11. Push to your assigned branch: `git push -u origin {{BRANCH_NAME}}` (NEVER force push)
