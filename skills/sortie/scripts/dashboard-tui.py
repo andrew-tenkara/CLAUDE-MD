@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Sortie TUI Dashboard — Real-time terminal UI for monitoring sortie agents."""
+"""Sortie TUI Dashboard — Real-time terminal UI for monitoring sortie agents.
+
+Shows a live-updating table with context % meters, token usage, JSONL metrics
+(tool calls, errors), kill/respawn actions, and a progress log panel.
+"""
 from __future__ import annotations
 
 import os
@@ -13,6 +17,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from read_sortie_state import read_sortie_state, get_all_progress_entries, AgentState
+from parse_jsonl_metrics import JsonlMetrics
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -39,6 +44,58 @@ PROGRESS_BAR_COLORS = {
 PROGRESS_BAR_WIDTH = 16
 
 
+# ── Context bar (from ENG-133) ───────────────────────────────────────
+
+def context_bar(pct: int | None, width: int = 15) -> Text:
+    """Build a Rich Text context bar with color coding."""
+    if pct is None:
+        return Text("  N/A  ", style="dim")
+
+    filled = round(pct / 100 * width)
+    empty = width - filled
+
+    if pct >= 80:
+        style = "bold red"
+    elif pct >= 50:
+        style = "bold yellow"
+    else:
+        style = "green"
+
+    bar = Text()
+    bar.append("█" * filled, style=style)
+    bar.append("░" * empty, style="dim")
+    bar.append(f" {pct}%", style=style)
+    return bar
+
+
+# ── Token formatting (from ENG-135) ─────────────────────────────────
+
+def format_tokens(input_tokens: int | None, output_tokens: int | None) -> Text:
+    """Format token counts as '12.4k in / 3.2k out'."""
+    if input_tokens is None and output_tokens is None:
+        return Text("–", style="grey37")
+
+    def _fmt(n: int | None) -> str:
+        if n is None:
+            return "0"
+        if n >= 1_000_000:
+            return f"{n / 1_000_000:.1f}M"
+        if n >= 1_000:
+            return f"{n / 1_000:.1f}k"
+        return str(n)
+
+    t = Text()
+    t.append(_fmt(input_tokens), style="cyan")
+    t.append(" in", style="grey70")
+    t.append(" / ", style="grey50")
+    t.append(_fmt(output_tokens), style="magenta")
+    t.append(" out", style="grey70")
+    return t
+
+
+# ── Status / progress / metrics formatters ───────────────────────────
+
+
 def make_progress_bar(status: str) -> Text:
     """Create a colored text-based progress bar based on status."""
     if status == "DONE":
@@ -58,6 +115,24 @@ def make_progress_bar(status: str) -> Text:
 def make_status_text(status: str) -> Text:
     color = STATUS_COLORS.get(status, "white")
     return Text(status, style=f"bold {color}")
+
+
+def make_metrics_text(metrics: Optional[JsonlMetrics]) -> Text:
+    """Format JSONL metrics as a compact one-line summary for the TUI table."""
+    if metrics is None:
+        return Text("–", style="grey37")
+
+    t = Text()
+    t.append(str(metrics.total_tool_calls), style="bold white")
+    t.append(" calls", style="grey70")
+
+    if metrics.error_count > 0:
+        t.append(f"  {metrics.error_count}✗", style="bold red")
+
+    if metrics.agent_spawns > 0:
+        t.append(f"  {metrics.agent_spawns}↳", style="bold yellow")
+
+    return t
 
 
 # ── Modal for ticket ID input ─────────────────────────────────────────
@@ -122,6 +197,19 @@ class SortieDashboard(App):
         padding: 0 1;
     }
 
+    #alert-bar {
+        dock: top;
+        height: auto;
+        max-height: 3;
+        background: $error;
+        color: $text;
+        text-align: center;
+        display: none;
+    }
+    #alert-bar.visible {
+        display: block;
+    }
+
     #agent-table {
         height: 1fr;
         min-height: 5;
@@ -174,6 +262,7 @@ class SortieDashboard(App):
 
     def compose(self) -> ComposeResult:
         yield SortieHeader(id="header-bar")
+        yield Static("", id="alert-bar")
         yield DataTable(id="agent-table")
         yield Vertical(
             Static(" LAST PROGRESS LOG", id="progress-title"),
@@ -186,7 +275,10 @@ class SortieDashboard(App):
         table = self.query_one("#agent-table", DataTable)
         table.cursor_type = "row"
         table.zebra_stripes = True
-        table.add_columns("TICKET", "MODEL", "PROGRESS", "STATUS", "TIME", "LAST ACTION")
+        table.add_columns(
+            "TICKET", "MODEL", "CONTEXT", "TOKENS", "PROGRESS", "STATUS",
+            "TIME", "METRICS", "LAST ACTION",
+        )
         self._do_refresh()
         self.set_interval(3.0, self._do_refresh)
 
@@ -203,6 +295,8 @@ class SortieDashboard(App):
         table = self.query_one("#agent-table", DataTable)
         table.clear()
 
+        alert_agents: list[str] = []
+
         for agent in self._state.agents:
             ticket_display = agent.ticket_id
             if agent.is_sub_agent:
@@ -217,14 +311,44 @@ class SortieDashboard(App):
             if len(last_action) > 60:
                 last_action = last_action[:57] + "..."
 
+            # Context % from ENG-133
+            ctx = agent.context or {}
+            pct = ctx.get("used_percentage")
+            stale = ctx.get("stale", True)
+
+            bar = context_bar(pct)
+            if stale and pct is not None:
+                bar.append(" \u23f8", style="dim")
+
+            if pct is not None and pct >= 80:
+                alert_agents.append(ticket_display.strip())
+
+            # Token usage from JSONL metrics
+            m = agent.jsonl_metrics
+            input_tokens = m.input_tokens if m else None
+            output_tokens = m.output_tokens if m else None
+
             table.add_row(
                 Text(ticket_display, style="bold"),
                 Text(agent.model, style="italic"),
+                bar,
+                format_tokens(input_tokens, output_tokens),
                 make_progress_bar(agent.status),
                 make_status_text(agent.status),
                 Text(f"[{agent.elapsed_time}]", style="grey70"),
+                make_metrics_text(agent.jsonl_metrics),
                 Text(last_action),
             )
+
+        # Alert bar for high context usage (from ENG-133)
+        alert_bar = self.query_one("#alert-bar")
+        if alert_agents:
+            names = ", ".join(alert_agents)
+            alert_bar.update(f" \u26a0  HIGH CONTEXT: {names} (\u226580%) \u2014 consider kill + respawn")
+            alert_bar.add_class("visible")
+        else:
+            alert_bar.remove_class("visible")
+
 
     def _refresh_progress_log(self) -> None:
         log = self.query_one("#progress-log", RichLog)

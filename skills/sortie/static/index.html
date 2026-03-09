@@ -13,10 +13,16 @@
       <span class="live-dot"></span>
       <span class="live-label">LIVE</span>
     </div>
-    <div id="header-stats" class="header-stats">Loading...</div>
+    <div class="header-right">
+      <div id="view-toggle" class="view-toggle">
+        <button class="toggle-btn active" data-view="agent">Agents</button>
+        <button class="toggle-btn" data-view="task">Tasks</button>
+      </div>
+      <div id="header-stats" class="header-stats">Loading...</div>
+    </div>
   </div>
   <div id="stat-chips" class="stat-chips"></div>
-  <div id="agent-grid" class="agent-grid"></div>
+  <div id="main-view"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>
