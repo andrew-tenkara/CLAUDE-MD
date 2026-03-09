@@ -137,9 +137,9 @@ At any time, you can check the status of all active agents:
 Then choose "Check status". Output shows:
 
 ```
-PRJ-52  [W1:P1]  ██████████ Done — pushed to feature/prj-52-...
-PRJ-49  [W1:P2]  ██████░░░░ Reviewing — fixing issues
-PRJ-45  [W1:P3]  ████░░░░░░ Working — building UI
+TEN-52  [W1:P1]  ██████████ Done — pushed to andrew/eng-102-...
+TEN-49  [W1:P2]  ██████░░░░ Reviewing — fixing issues
+TEN-45  [W1:P3]  ████░░░░░░ Working — building UI
 ```
 
 ### Clean Up
@@ -208,4 +208,4 @@ For detailed orchestrator behavior, see `SKILL.md` in this directory. It covers:
 
 ---
 
-Questions? Check `SKILL.md` for the full orchestrator spec.
+**Built for the Tenkara team.** Questions? Check `SKILL.md` or ask the team lead.

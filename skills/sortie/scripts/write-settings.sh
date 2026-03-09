@@ -20,6 +20,8 @@ fi
 
 mkdir -p "$WORKTREE_PATH/.claude"
 
-sed "s|<BRANCH-NAME>|${BRANCH_NAME}|g" "$TEMPLATE" > "$WORKTREE_PATH/.claude/settings.json"
+sed -e "s|<BRANCH-NAME>|${BRANCH_NAME}|g" \
+    -e "s|<SORTIE_SCRIPTS>|${SKILLS_DIR}/scripts|g" \
+    "$TEMPLATE" > "$WORKTREE_PATH/.claude/settings.json"
 
 echo "Settings written to $WORKTREE_PATH/.claude/settings.json (push scoped to ${BRANCH_NAME})"

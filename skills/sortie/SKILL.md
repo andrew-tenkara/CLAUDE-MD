@@ -10,10 +10,10 @@ You are the **orchestrator**. You never write implementation code yourself. You 
 
 ## Skill Directory
 
-All supporting scripts and templates live at `~/.claude/skills/sortie/`:
+All supporting scripts and templates live at `.claude/skills/sortie/` in the repo root:
 
 ```
-~/.claude/skills/sortie/
+.claude/skills/sortie/
 ├── SKILL.md                     # This file — the orchestrator brain
 ├── scripts/
 │   ├── setup.sh                 # First-run prerequisite checker
@@ -22,27 +22,22 @@ All supporting scripts and templates live at `~/.claude/skills/sortie/`:
 │   ├── write-directive.sh       # Templates directive.md from arguments
 │   ├── spawn-pane.sh            # iTerm2 AppleScript pane management
 │   ├── check-status.sh          # Reads progress.md + marker files across all agents
-│   ├── cleanup.sh               # Removes worktrees + branches safely
-│   └── dashboard-server.mjs     # Web dashboard server (node, port 4242)
-├── lib/
-│   └── read-sortie-state.mjs    # Shared state reader for dashboard
-├── static/
-│   ├── index.html               # Dashboard page
-│   ├── style.css                # Dark theme styles
-│   └── app.js                   # Client-side SSE + rendering
+│   └── cleanup.sh               # Removes worktrees + branches safely
 └── templates/
     ├── directive.md              # Base directive template (with {{PLACEHOLDERS}})
     └── settings.json             # Base permissions template
 ```
 
-Reference scripts by full path: `bash ~/.claude/skills/sortie/scripts/<name>.sh`
+Reference scripts by repo-relative path from the git root:
+`SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts`
 
 ## Prerequisites
 
 On first invocation, run the setup check:
 
 ```bash
-bash ~/.claude/skills/sortie/scripts/setup.sh
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/setup.sh"
 ```
 
 If it exits non-zero, tell the user what's missing and stop.
@@ -115,25 +110,7 @@ Ask only what's genuinely unclear. If the spec is thorough, skip straight to the
 
 **Note:** Spec-based tickets won't trigger Linear status updates. If you want Linear tracking, create a ticket first and use `/sortie <ticketUrl>` instead.
 
-### 5. `/sortie web-dashboard` — Live Web Dashboard
-
-Starts the sortie web dashboard on `localhost:4242`. Shows all active agents in a dark-themed UI with real-time SSE updates.
-
-```bash
-node ~/.claude/skills/sortie/scripts/dashboard-server.mjs
-```
-
-Run this in the background and tell the user the dashboard is live at `http://localhost:4242`. The dashboard shows:
-
-- All agents from `.claude/worktrees/*/.sortie/` directories (including sub-agents)
-- Status chips: Working (blue), Pre-review (amber), Done (green)
-- Agent cards with ticket ID, model badge, progress, branch, elapsed time
-- Kill button (sends SIGTERM) and Open PR button (runs `gh pr create`)
-- Auto-updates every 3 seconds via SSE
-
-To stop the dashboard later: `kill $(lsof -ti :4242)`
-
-### 6. `/sortie resume <ticketUrl>` — Resume In-Progress Ticket
+### 5. `/sortie resume <ticketUrl>` — Resume In-Progress Ticket
 
 Use when a ticket has an existing branch with partial work. The orchestrator:
 
@@ -236,12 +213,13 @@ When a ticket is approved, execute this sequence by calling the supporting scrip
 
 ### Branch Naming
 
-**Always use the Linear `gitBranchName` field** (e.g., `username/prj-97-create-client-safe-logger`). This is how Linear auto-updates ticket status when a PR is opened. Do NOT invent a `sortie/<ticket-id>` branch name.
+**Always use the Linear `gitBranchName` field** (e.g., `andrew/eng-97-create-client-safe-logger-utility-for-frontend`). This is how Linear auto-updates ticket status when a PR is opened. Do NOT invent a `sortie/<ticket-id>` branch name.
 
 ### Step 1: Create Worktree
 
 ```bash
-bash ~/.claude/skills/sortie/scripts/create-worktree.sh \
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/create-worktree.sh" \
   <ticket-id> \
   <git-branch-name> \
   [base-branch]   # defaults to dev
@@ -263,7 +241,8 @@ The script handles:
 ### Step 2: Write Permissions
 
 ```bash
-bash ~/.claude/skills/sortie/scripts/write-settings.sh <git-branch-name> <worktree-path>
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/write-settings.sh" <git-branch-name> <worktree-path>
 ```
 
 The script handles:
@@ -276,7 +255,8 @@ The script handles:
 ### Step 3: Write Directive
 
 ```bash
-bash ~/.claude/skills/sortie/scripts/write-directive.sh \
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/write-directive.sh" \
   <worktree-path> \
   --ticket-id <ticket-id> \
   --title "<title>" \
@@ -301,7 +281,8 @@ The script handles:
 ### Step 4: Spawn iTerm2 Pane
 
 ```bash
-bash ~/.claude/skills/sortie/scripts/spawn-pane.sh \
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/spawn-pane.sh" \
   <worktree-path> \
   <model> \
   <ticket-id> \
@@ -314,7 +295,7 @@ Note: argument order is `<worktree-path> <model> <ticket-id>`. Pane index is a f
 The script handles:
 
 - Determining whether to create a new window (`--new-window` or `--pane-index 1`) or split an existing one
-- Window layout: alternating top/bottom fill — pane 1 top-left, pane 2 bottom-left, then odd panes extend the top row and even panes extend the bottom row; max 8 per window (pane 9+ opens a new window)
+- Window layout: 4 panes across top row, 4 across bottom row, max 8 per window
 - Setting the pane's session name to the ticket ID
 - Executing the claude command with model, disallowedTools flags, and the directive prompt
 - Returns the window number and pane position for tracking
@@ -385,7 +366,8 @@ agents = {
 When the user asks for status (or periodically when idle), run:
 
 ```bash
-~/.claude/skills/sortie/scripts/check-status.sh
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/check-status.sh"
 ```
 
 The script handles:
@@ -438,7 +420,8 @@ When sub-agents complete (all have `post-review.done`):
 When the user says "clean up" or "clean TEN-42":
 
 ```bash
-~/.claude/skills/sortie/scripts/cleanup.sh <ticket-id>
+SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts
+bash "$SORTIE/cleanup.sh" <ticket-id>
 ```
 
 The script handles:
@@ -502,4 +485,4 @@ These permissions are enforced in two layers:
 - Keep the user informed of progress without being noisy.
 - **No force pushes, no branch deletion, no file deletion — ever. This is the single most important rule.**
 - When all agents are done, summarize: which branches were pushed, any issues encountered, and what's ready for PR.
-- All mechanical operations (worktree creation, settings templating, pane spawning, status checking, cleanup) are handled by scripts in `~/.claude/skills/sortie/scripts/`. Call them, don't reinvent them inline.
+- All mechanical operations (worktree creation, settings templating, pane spawning, status checking, cleanup) are handled by scripts in `.claude/skills/sortie/scripts/` (repo-local). Call them via `SORTIE=$(git rev-parse --show-toplevel)/.claude/skills/sortie/scripts`, don't reinvent them inline.
