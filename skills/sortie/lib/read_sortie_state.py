@@ -1,24 +1,30 @@
-"""Read sortie agent state from .claude/worktrees/*/.sortie/ directories."""
+"""
+read_sortie_state.py — Read sortie agent state from all worktrees
 
+Returns agent state with status, model, progress, context usage,
+JSONL metrics, and sub-agent information. Used by dashboard-tui.py.
+"""
+
+import json
 import os
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-
-def _get_git_root() -> Path:
-    """Derive the repo root from git so this works in any checkout location."""
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, timeout=5,
-    )
-    return Path(result.stdout.strip())
+from parse_jsonl_metrics import JsonlMetrics, parse_jsonl_metrics
 
 
-WORKTREES_ROOT = _get_git_root() / ".claude" / "worktrees"
+def _get_worktrees_root() -> Path:
+    # This file lives at <repo>/.claude/skills/sortie/lib/read_sortie_state.py
+    repo_root = Path(__file__).resolve().parents[4]
+    return repo_root / ".claude" / "worktrees"
+
+
+WORKTREES_ROOT = _get_worktrees_root()
 
 
 @dataclass
@@ -34,6 +40,8 @@ class AgentState:
     sub_name: str = ""
     is_sub_agent: bool = False
     parent_ticket: Optional[str] = None
+    context: Optional[dict] = None
+    jsonl_metrics: Optional[JsonlMetrics] = None
 
 
 @dataclass
@@ -51,6 +59,13 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return ""
+
+
+def _read_json_safe(path: Path):
+    try:
+        return json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -79,6 +94,25 @@ def _get_branch(worktree_path: Path) -> str:
         return result.stdout.strip() or "unknown"
     except Exception:
         return "unknown"
+
+
+def _read_context(sortie_dir: Path) -> dict:
+    """Read context usage from context.json (ENG-133 context % tracking)."""
+    ctx = _read_json_safe(sortie_dir / "context.json")
+    if ctx is None:
+        return {
+            "used_percentage": None,
+            "context_window_size": None,
+            "total_input_tokens": None,
+            "total_output_tokens": None,
+            "model": None,
+            "timestamp": None,
+            "stale": True,
+        }
+
+    age = int(time.time()) - (ctx.get("timestamp") or 0)
+    ctx["stale"] = age > 60
+    return ctx
 
 
 def _read_agent(sortie_dir: Path, worktree_path: Path,
@@ -117,6 +151,12 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
     except OSError:
         pass
 
+    # ENG-133: context % tracking from statusline API
+    context = _read_context(sortie_dir)
+
+    # ENG-134: JSONL metrics (token usage, tool calls, errors, timeline)
+    jsonl_metrics = parse_jsonl_metrics(str(worktree_path))
+
     return AgentState(
         ticket_id=_extract_field(directive, "ID"),
         title=_extract_field(directive, "Title"),
@@ -129,10 +169,20 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
         sub_name=sub_name,
         is_sub_agent=is_sub_agent,
         parent_ticket=parent_ticket,
+        context=context,
+        jsonl_metrics=jsonl_metrics,
     )
 
 
-def read_sortie_state() -> DashboardState:
+def read_sortie_state(target_ticket: Optional[str] = None) -> DashboardState:
+    """Read state for all active sortie agents.
+
+    Args:
+        target_ticket: optional ticket ID to filter to
+
+    Returns:
+        DashboardState with agents, summary counts, and timestamp
+    """
     agents: List[AgentState] = []
 
     if not WORKTREES_ROOT.is_dir():
@@ -142,6 +192,9 @@ def read_sortie_state() -> DashboardState:
         entries = sorted(WORKTREES_ROOT.iterdir())
     except OSError:
         return DashboardState(timestamp=datetime.now().isoformat())
+
+    if target_ticket:
+        entries = [e for e in entries if e.name == target_ticket]
 
     for entry in entries:
         if entry.is_symlink() or not entry.is_dir():
