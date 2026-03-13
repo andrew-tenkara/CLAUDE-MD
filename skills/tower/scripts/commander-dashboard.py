@@ -1542,6 +1542,7 @@ class PriFlyCommander(App):
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
         Binding("t", "open_terminal", "Terminal", priority=True, show=False),
         Binding("z", "dismiss_selected", "Dismiss", priority=True, show=False),
+        Binding("s", "sync_worktrees", "Sync", priority=True, show=False),
         Binding("escape", "focus_board", "Board", show=False),
         Binding("tab", "toggle_focus", "Focus", show=False),
         Binding("q", "quit", "Quit", show=False),
@@ -3757,6 +3758,11 @@ end tell
             return
         self._cmd_recall([pilot.callsign])
 
+    def action_sync_worktrees(self) -> None:
+        """Force an immediate sync of all worktrees."""
+        self._sync_legacy_agents()
+        self._add_radio("PRI-FLY", "SYNC — scanning worktrees", "system")
+
     def action_compact_selected(self) -> None:
         """Compact (AAR) the selected pilot."""
         pilot = self._get_selected_pilot()
@@ -4214,6 +4220,7 @@ end tell
             _key("T", t_label)
             _key("L", "Linear")
             _key("M", "Boss", "bold magenta")
+            _key("S", "Sync")
             _sep()
             _key("F", "Flight")
             _sep()
