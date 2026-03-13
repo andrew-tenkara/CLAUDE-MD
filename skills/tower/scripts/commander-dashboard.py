@@ -3266,9 +3266,11 @@ class PriFlyCommander(App):
             f"  ln -sf '{self._project_dir}/.env.local' .env.local\n"
             f"  echo '✓ Symlinked .env.local from base project'\n"
             f"fi\n"
-            f"if [ -f pnpm-lock.yaml ] && [ ! -d node_modules ]; then\n"
-            f"  echo '📦 Installing dependencies...'\n"
-            f"  pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
+            f"if [ -f pnpm-lock.yaml ]; then\n"
+            f"  if [ ! -d node_modules ] || [ pnpm-lock.yaml -nt node_modules ]; then\n"
+            f"    echo '📦 Installing dependencies...'\n"
+            f"    pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
+            f"  fi\n"
             f"fi\n"
             f"\n"
             f"# Set PREFLIGHT status — agent is on deck, not yet airborne\n"
@@ -3777,9 +3779,8 @@ end tell
         tid = pilot.ticket_id
         pane_name = f"SRV-{pilot.callsign}"
 
-        if pane_name in self._iterm_panes:
-            self._add_radio("PRI-FLY", f"Server pane already open for {pilot.callsign}", "system")
-            return
+        # Always allow re-launching — if there's already something on the port it'll error out naturally
+        self._iterm_panes.discard(pane_name)
 
         # Pick a port — start at 3000, increment by worktree index
         all_pilots = self._roster.all_pilots()
@@ -3804,10 +3805,12 @@ end tell
             f"  printf '\\033[1;32m✓ Symlinked .env.local\\033[0m\\n'\n"
             f"fi\n"
             f"\n"
-            f"# Install deps if needed\n"
-            f"if [ -f pnpm-lock.yaml ] && [ ! -d node_modules ]; then\n"
-            f"  printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
-            f"  pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
+            f"# Install deps if missing or stale (lockfile newer than node_modules)\n"
+            f"if [ -f pnpm-lock.yaml ]; then\n"
+            f"  if [ ! -d node_modules ] || [ pnpm-lock.yaml -nt node_modules ]; then\n"
+            f"    printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
+            f"    pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
+            f"  fi\n"
             f"fi\n"
             f"\n"
             f"# Register in managed-servers.json\n"
