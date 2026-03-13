@@ -1640,6 +1640,7 @@ class PriFlyCommander(App):
         self._legacy_agents: dict[str, AgentState] = {}  # ticket_id -> AgentState
         self._observer: Optional[Observer] = None
         self._watched_jsonl_dirs: set[str] = set()  # JSONL dirs already watched
+        self._rtk_active: bool = False
 
         # Token delta tracking — detect when agents stop producing tokens
         self._prev_tokens: dict[str, int] = {}    # callsign -> last known token count
@@ -1719,6 +1720,9 @@ class PriFlyCommander(App):
         # Init Air Boss header + spawn immediately (claims first Pit Boss pane)
         self._init_airboss()
         self._spawn_airboss()
+
+        # Preflight: check RTK token optimizer
+        self._check_rtk()
 
         # Sync existing worktree agents on startup
         self._sync_legacy_agents()
@@ -2248,6 +2252,8 @@ class PriFlyCommander(App):
 
         self._open_agent_pane(pilot)
         self._add_radio("PRI-FLY", f"ON DECK — {pilot.callsign} standing by for {identifier}", "success")
+        if getattr(self, '_rtk_active', False):
+            self._add_radio(pilot.callsign, "RTK active — drop tanks fitted, extended range", "system")
         _notify("USS TENKARA", f"{pilot.callsign} on deck for {identifier}")
         self._refresh_ui()
 
@@ -2606,6 +2612,23 @@ class PriFlyCommander(App):
         self._refresh_ui()
 
     # ── Air Boss (Mini Boss) — persistent Opus orchestrator ─────────
+
+    def _check_rtk(self) -> None:
+        """Preflight check: verify RTK token optimizer is installed and hooked."""
+        import shutil
+        rtk_bin = shutil.which("rtk")
+        if not rtk_bin:
+            self._add_radio("PRI-FLY", "RTK not installed — agents burning raw tokens. Run: brew install rtk && rtk init -g", "error")
+            self._rtk_active = False
+            return
+        # Check if hook exists
+        hook_path = Path.home() / ".claude" / "hooks" / "rtk-rewrite.sh"
+        if not hook_path.exists():
+            self._add_radio("PRI-FLY", "RTK installed but hook missing. Run: rtk init -g", "error")
+            self._rtk_active = False
+            return
+        self._rtk_active = True
+        self._add_radio("PRI-FLY", "RTK fuel optimizer online — extended range authorized", "system")
 
     def _init_airboss(self) -> None:
         """Initialize the Air Boss header."""
