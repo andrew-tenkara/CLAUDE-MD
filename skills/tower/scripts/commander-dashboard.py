@@ -1391,7 +1391,8 @@ class PriFlyCommander(App):
     #select-mode-banner.hidden { display: none; }
 
     #flight-strip {
-        height: 7;
+        height: auto;
+        max-height: 10;
         background: $surface-darken-2;
     }
     #flight-strip.collapsed { height: 0; display: none; }

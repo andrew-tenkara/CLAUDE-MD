@@ -777,19 +777,43 @@ class FlightOpsStrip(Static):
 
         # Labels under sprites: ticket ID follows active sprites,
         # callsign for parked/recovered. Color-coded by status.
-        # Build as (pos, char, style) tuples for per-label coloring.
-        label_cells: list[tuple[int, str, str]] = []
+        # Up to 3 label rows — overlapping labels bump to next row.
+        MAX_LABEL_ROWS = 3
+        label_rows_chars: list[list[str]] = [[" "] * sw for _ in range(MAX_LABEL_ROWS)]
+        label_rows_cells: list[list[tuple[int, str, str]]] = [[] for _ in range(MAX_LABEL_ROWS)]
+        occupied: list[list[tuple[int, int]]] = [[] for _ in range(MAX_LABEL_ROWS)]
+
         for col, _lane, txt, _style, callsign in sprite_overlays:
             sprite = self._sprites.get(callsign)
             is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
             label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
             style = "dim green" if is_parked else "bold bright_white"
             label_start = col + len(txt) // 2 - len(label) // 2
-            for i, ch in enumerate(label):
-                pos = label_start + i
-                if 0 <= pos < sw:
-                    label_cells.append((pos, ch, style))
-                    row_label[pos] = ch  # keep for bounds
+            label_end = label_start + len(label) - 1
+
+            # Find first row without overlap
+            placed = False
+            for r in range(MAX_LABEL_ROWS):
+                overlaps = any(not (label_end < s or label_start > e) for s, e in occupied[r])
+                if not overlaps:
+                    occupied[r].append((label_start, label_end))
+                    for i, ch in enumerate(label):
+                        pos = label_start + i
+                        if 0 <= pos < sw:
+                            label_rows_cells[r].append((pos, ch, style))
+                            label_rows_chars[r][pos] = ch
+                    placed = True
+                    break
+            if not placed:
+                # All rows full — overwrite last row (best effort)
+                for i, ch in enumerate(label):
+                    pos = label_start + i
+                    if 0 <= pos < sw:
+                        label_rows_cells[MAX_LABEL_ROWS - 1].append((pos, ch, style))
+                        label_rows_chars[MAX_LABEL_ROWS - 1][pos] = ch
+
+        # Keep row_label for backwards compat (first row)
+        row_label = label_rows_chars[0]
 
         # ── Compose Rich Text output ──────────────────────────────────
 
@@ -829,18 +853,19 @@ class FlightOpsStrip(Static):
         self._render_aux_row(result, row_aux, sw, aux_overlays)
         result.append("║\n", style="dim green")
 
-        # Label row: ticket IDs (active) / callsigns (parked), color-coded
-        result.append(" ║", style="dim green")
-        # Build style map from label_cells
-        label_style_map: dict[int, str] = {}
-        for pos, _ch, style in label_cells:
-            label_style_map[pos] = style
-        # Render char-by-char with per-label styling
-        for pos in range(sw):
-            ch = row_label[pos]
-            style = label_style_map.get(pos, "dim green")
-            result.append(ch, style=style)
-        result.append("║\n", style="dim green")
+        # Label rows: render each row that has content
+        for r in range(MAX_LABEL_ROWS):
+            if not label_rows_cells[r]:
+                continue  # skip empty rows
+            result.append(" ║", style="dim green")
+            style_map: dict[int, str] = {}
+            for pos, _ch, style in label_rows_cells[r]:
+                style_map[pos] = style
+            for pos in range(sw):
+                ch = label_rows_chars[r][pos]
+                style = style_map.get(pos, "dim green")
+                result.append(ch, style=style)
+            result.append("║\n", style="dim green")
 
         # Bottom border
         result.append(" ╚", style="dim green")
