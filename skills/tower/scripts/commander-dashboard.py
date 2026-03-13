@@ -3556,9 +3556,16 @@ end tell
         self._refresh_ui()
 
     def action_open_terminal(self) -> None:
-        """Open a plain terminal pane cd'd to the project root."""
-        self._iterm_pane_cmd("TERMINAL", f"cd '{self._project_dir}'")
-        self._add_radio("PRI-FLY", f"Terminal opened at {self._project_dir}", "system")
+        """Open a plain terminal pane cd'd to the selected pilot's worktree, or project root."""
+        pilot = self._get_selected_pilot()
+        if pilot and pilot.worktree_path:
+            target = pilot.worktree_path
+            label = f"Terminal opened at {pilot.callsign} worktree"
+        else:
+            target = self._project_dir
+            label = f"Terminal opened at {self._project_dir}"
+        self._iterm_pane_cmd("TERMINAL", f"cd '{target}'")
+        self._add_radio("PRI-FLY", label, "system")
 
     def action_relaunch_miniboss(self) -> None:
         """Relaunch Mini Boss — clears state and re-spawns."""
