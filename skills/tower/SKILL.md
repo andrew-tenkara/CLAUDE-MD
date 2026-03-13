@@ -4,7 +4,7 @@ description: "USS Tenkara Pri-Fly — Full agent orchestration TUI with hotkey-d
 command: /tower
 ---
 
-# USS Tenkara Pri-Fly — Sortie Commander
+# USS Tenkara Pri-Fly — Tower
 
 Full agent orchestration dashboard. You are the Air Boss — spawn agents, manage missions, and command from a single pane of glass. All actions via hotkeys. Talk to Mini Boss in its iTerm2 pane for complex orchestration.
 
@@ -43,7 +43,7 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 | `L` | Browse Linear issues (or pilot's ticket) |
 | `M` | Relaunch Mini Boss |
 | `R` | Resume — relaunch recovered/idle pilot |
-| `W` | Wave-off — hard kill (with confirmation) |
+| `W` | Wave-off — hard kill + server cleanup |
 | `K` | Compact — trigger AAR refueling |
 | `X` | Recall — graceful wind-down |
 | `F` | Toggle flight strip visibility |
