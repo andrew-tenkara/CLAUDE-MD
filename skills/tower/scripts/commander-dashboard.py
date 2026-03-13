@@ -3146,8 +3146,10 @@ class PriFlyCommander(App):
 
         kickoff = f"Read {sortie_dir}/directive.md and follow all instructions. Track progress in {sortie_dir}/progress.md"
 
-        # Random pilot quote
+        # Random pilot quote (escape single quotes for bash printf)
         p_quote, p_attr = get_pilot_launch_quote()
+        p_quote = p_quote.replace("'", "'\\''")
+        p_attr = p_attr.replace("'", "'\\''")
 
         # Top Gun splash + launch
         splash = (
@@ -3523,23 +3525,37 @@ end tell
             self._add_radio("PRI-FLY", "Failed to look up PR", "error")
 
     def _extract_server_url(self, pilot) -> str:
-        """Extract a localhost URL from pilot's status_hint or managed-servers.json."""
+        """Extract a localhost URL from status_hint, managed-servers.json, or conversation."""
         import re as _re
-        # Check status_hint first
+        url_re = _re.compile(r"(localhost:\d+|127\.0\.0\.1:\d+|0\.0\.0\.0:\d+)")
+
+        # 1. Check status_hint
         hint = pilot.status_hint or ""
-        match = _re.search(r"(localhost:\d+|127\.0\.0\.1:\d+|0\.0\.0\.0:\d+)", hint)
+        match = url_re.search(hint)
         if match:
             return match.group(1)
-        # Fallback: check managed-servers.json directly
+
+        # 2. Check managed-servers.json
         try:
             servers_file = Path(self._project_dir) / ".sortie" / "managed-servers.json"
             if servers_file.exists():
                 entries = json.loads(servers_file.read_text(encoding="utf-8"))
                 for entry in entries:
                     if entry.get("ticket_id") == pilot.ticket_id:
-                        return entry.get("url", "")
+                        url = entry.get("url", "")
+                        if url:
+                            return url
         except (json.JSONDecodeError, OSError):
             pass
+
+        # 3. Scan agent conversation buffer (most recent first)
+        session = self._agent_mgr.get(pilot.callsign) if hasattr(self, '_agent_mgr') else None
+        if session:
+            for entry in reversed(session.conversation):
+                match = url_re.search(entry.content)
+                if match:
+                    return match.group(1)
+
         return ""
 
     def _get_github_repo_url(self, cwd: str) -> str:

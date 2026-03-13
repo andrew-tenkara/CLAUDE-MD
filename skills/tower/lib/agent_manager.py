@@ -193,6 +193,7 @@ class AgentProcess:
             env=env,
             text=True,
             bufsize=1,  # Line-buffered
+            start_new_session=True,  # Own process group so wave-off kills children too
         )
         self.launched_at = time.time()
         self._alive = True
@@ -263,22 +264,31 @@ class AgentProcess:
         )
 
     def wave_off(self) -> None:
-        """Hard kill — SIGTERM the subprocess."""
+        """Hard kill — SIGTERM the entire process group (agent + child servers)."""
         if self.process and self.is_alive:
-            log.warning(f"[{self.callsign}] WAVE OFF — sending SIGTERM")
+            log.warning(f"[{self.callsign}] WAVE OFF — sending SIGTERM to process group")
             try:
-                self.process.terminate()
-            except OSError:
-                pass
+                pgid = os.getpgid(self.process.pid)
+                os.killpg(pgid, signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                # Fallback to just the process if pgid lookup fails
+                try:
+                    self.process.terminate()
+                except OSError:
+                    pass
 
     def kill(self) -> None:
-        """Force kill — SIGKILL."""
+        """Force kill — SIGKILL the entire process group."""
         if self.process and self.is_alive:
-            log.warning(f"[{self.callsign}] KILL — sending SIGKILL")
+            log.warning(f"[{self.callsign}] KILL — sending SIGKILL to process group")
             try:
-                self.process.kill()
-            except OSError:
-                pass
+                pgid = os.getpgid(self.process.pid)
+                os.killpg(pgid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                try:
+                    self.process.kill()
+                except OSError:
+                    pass
 
     def _read_stdout(self) -> None:
         """Read stream-json events from stdout in a background thread."""

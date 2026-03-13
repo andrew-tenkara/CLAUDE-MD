@@ -117,6 +117,7 @@ class FlightSprite:
     anim_frame: int = 0
     phase_ticks: int = 0
     prev_status: str = ""
+    ticket_id: str = ""   # e.g. "ENG-177" — shown as label when not recovered
     # SAR-specific state
     helo_col: int = 0
     parachute_col: int = 0
@@ -238,7 +239,8 @@ class FlightOpsStrip(Static):
             status = getattr(pilot, "status", "IDLE")
 
             if pid not in self._sprites:
-                sprite = FlightSprite(pilot_id=pid, prev_status=status)
+                tid = getattr(pilot, "ticket_id", "")
+                sprite = FlightSprite(pilot_id=pid, prev_status=status, ticket_id=tid)
                 s = status.upper()
                 if s == "RECOVERED":
                     sprite.phase = "DECK_PARK"
@@ -748,11 +750,15 @@ class FlightOpsStrip(Static):
                 # Show new jet on deck (already on sprite_overlays via F14_PARKED)
                 pass
 
-        # Callsign labels under main-lane sprites
+        # Labels under main-lane sprites: ticket ID follows the sprite,
+        # callsign only for recovered/parked sprites
         for col, lane, txt, _style, callsign in sprite_overlays:
             if lane == 0:
-                label_start = col + len(txt) // 2 - len(callsign) // 2
-                for i, ch in enumerate(callsign):
+                sprite = self._sprites.get(callsign)
+                is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
+                label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
+                label_start = col + len(txt) // 2 - len(label) // 2
+                for i, ch in enumerate(label):
                     pos = label_start + i
                     if 0 <= pos < sw:
                         row_label[pos] = ch
