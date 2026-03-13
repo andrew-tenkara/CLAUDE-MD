@@ -120,7 +120,7 @@ Valid statuses: PREFLIGHT, AIRBORNE, HOLDING, ON_APPROACH, RECOVERED
 Update on meaningful phase transitions only (starting new task area, running tests, submitting PR, blocked, done).
 Use unix timestamp (seconds). Phase is a short human-readable description of what you're doing.
 PREFLIGHT is set automatically before launch — do not write it yourself.
-Write AIRBORNE when you begin working.
+Write AIRBORNE only when you start actively making changes (editing files, running commands, writing code). Reading context, reading tickets, reading files, and planning are all still PREFLIGHT.
 Write HOLDING when you are waiting/blocked/idle.
 NEVER write RECOVERED — that is set automatically when your session ends.
 When your mission is complete, write HOLDING with phase 'mission complete — awaiting orders'.
