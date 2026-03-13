@@ -4181,14 +4181,14 @@ end tell
 
     def _refresh_table(self) -> None:
         table = self.query_one("#agent-table", DataTable)
-        prev_cursor = table.cursor_row if table.row_count > 0 else 0
+        # Remember selected pilot by callsign (stable across refreshes)
+        prev_callsign = ""
+        if table.row_count > 0 and table.cursor_row < len(self._sorted_pilots):
+            prev_callsign = self._sorted_pilots[table.cursor_row].callsign
         table.clear()
 
         pilots = self._roster.all_pilots()
-        self._sorted_pilots = sorted(
-            pilots,
-            key=lambda p: (STATUS_SORT_ORDER.get(p.status, 9), p.callsign),
-        )
+        self._sorted_pilots = sorted(pilots, key=lambda p: p.callsign)
 
         critical = []
         for pilot in self._sorted_pilots:
@@ -4250,10 +4250,15 @@ end tell
                 height=2,
             )
 
-        # Restore cursor
-        if table.row_count > 0:
-            restored = min(prev_cursor, table.row_count - 1)
+        # Restore cursor by callsign (stable even when pilots are added/removed)
+        if table.row_count > 0 and prev_callsign:
+            restored = next(
+                (i for i, p in enumerate(self._sorted_pilots) if p.callsign == prev_callsign),
+                0,
+            )
             table.move_cursor(row=restored)
+        elif table.row_count > 0:
+            table.move_cursor(row=0)
 
         # Alert bar for critical fuel
         alert_bar = self.query_one("#alert-bar")
