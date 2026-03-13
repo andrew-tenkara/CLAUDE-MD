@@ -1373,6 +1373,7 @@ class CarrierCIC(App):
 
     def _refresh_table(self) -> None:
         table = self.query_one("#agent-table", DataTable)
+        prev_cursor = table.cursor_row if table.row_count > 0 else 0
         table.clear()
 
         critical_agents: list[str] = []
@@ -1488,6 +1489,11 @@ class CarrierCIC(App):
                 status_text,
                 height=2,
             )
+
+        # Restore cursor position after rebuild
+        if table.row_count > 0:
+            restored = min(prev_cursor, table.row_count - 1)
+            table.move_cursor(row=restored)
 
         self._condition_red = any_critical
         alert_bar = self.query_one("#alert-bar")
