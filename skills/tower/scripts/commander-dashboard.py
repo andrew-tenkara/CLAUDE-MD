@@ -2300,14 +2300,60 @@ class PriFlyCommander(App):
             self._add_radio("PRI-FLY", "Usage: /wave-off <callsign>", "system")
             return
         callsign = args[0]
-        confirmed = await self.push_screen_wait(
-            ConfirmScreen(f"WAVE OFF {callsign}? This will kill the agent.")
-        )
+        try:
+            confirmed = await self.push_screen_wait(
+                ConfirmScreen(f"WAVE OFF {callsign}? This will kill the agent.")
+            )
+        except Exception:
+            self._add_radio("PRI-FLY", f"Wave-off cancelled — confirm dialog failed", "error")
+            return
         if confirmed:
-            if self._agent_mgr.wave_off(callsign):
-                self._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated", "error")
-            else:
-                self._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
+            try:
+                # Kill managed dev servers for this pilot first
+                pilot = self._roster.get_by_callsign(callsign)
+                if pilot:
+                    self._kill_managed_servers(pilot.ticket_id, callsign)
+
+                if self._agent_mgr.wave_off(callsign):
+                    self._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated", "error")
+                else:
+                    self._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
+            except Exception as e:
+                self._add_radio("PRI-FLY", f"Wave-off error: {e}", "error")
+
+    def _kill_managed_servers(self, ticket_id: str, callsign: str) -> None:
+        """Kill any managed dev servers for the given ticket and remove from registry."""
+        servers_file = Path(self._project_dir) / ".sortie" / "managed-servers.json"
+        try:
+            if not servers_file.exists():
+                return
+            entries = json.loads(servers_file.read_text(encoding="utf-8"))
+            if not isinstance(entries, list):
+                return
+
+            remaining = []
+            killed = 0
+            for entry in entries:
+                if entry.get("ticket_id") == ticket_id:
+                    pid = entry.get("pid")
+                    url = entry.get("url", "")
+                    if pid:
+                        try:
+                            os.kill(int(pid), 15)  # SIGTERM
+                            killed += 1
+                            self._add_radio(callsign, f"Server {url} (pid {pid}) terminated", "system")
+                        except (ProcessLookupError, PermissionError, ValueError):
+                            # Already dead or can't kill — just remove the entry
+                            pass
+                else:
+                    remaining.append(entry)
+
+            if killed or len(remaining) != len(entries):
+                servers_file.write_text(json.dumps(remaining, indent=2) + "\n")
+                if killed:
+                    self._add_radio("PRI-FLY", f"Killed {killed} server(s) for {callsign}", "system")
+        except (json.JSONDecodeError, OSError) as e:
+            self._add_radio("PRI-FLY", f"Server cleanup error: {e}", "error")
 
     def _cmd_compact(self, args: list[str]) -> None:
         if not args:
@@ -3517,11 +3563,14 @@ end tell
 
     async def action_waveoff_selected(self) -> None:
         """Wave off (hard kill) the selected pilot."""
-        pilot = self._get_selected_pilot()
-        if not pilot:
-            self._add_radio("PRI-FLY", "No pilot selected", "error")
-            return
-        await self._cmd_wave_off([pilot.callsign])
+        try:
+            pilot = self._get_selected_pilot()
+            if not pilot:
+                self._add_radio("PRI-FLY", "No pilot selected", "error")
+                return
+            await self._cmd_wave_off([pilot.callsign])
+        except Exception as e:
+            self._add_radio("PRI-FLY", f"Wave-off failed: {e}", "error")
 
     def action_recall_selected(self) -> None:
         """Graceful recall of the selected pilot."""
