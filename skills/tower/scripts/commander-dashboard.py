@@ -512,6 +512,10 @@ def _format_elapsed(seconds: float) -> str:
 class SplashScreen(ModalScreen):
     BINDINGS = [Binding("escape", "dismiss", "Skip")]
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._dismissed = False
+
     def compose(self) -> ComposeResult:
         splash_path = Path(__file__).resolve().parent.parent / "assets" / "splash.txt"
         try:
@@ -541,7 +545,14 @@ class SplashScreen(ModalScreen):
         yield Static(content, id="splash-content")
 
     def on_key(self, event) -> None:
-        self.dismiss()
+        event.stop()  # prevent hotkeys on the board below from firing
+        if self._dismissed:
+            return
+        self._dismissed = True
+        try:
+            self.dismiss()
+        except Exception:
+            pass
 
     CSS = """
     SplashScreen { align: center middle; }
@@ -1584,6 +1595,12 @@ class PriFlyCommander(App):
         # Air Boss — interactive Claude session in Pit Boss pane (no longer stream-json)
         self._airboss_spawned: bool = False
 
+        # Background sync guard — prevent overlapping read_sortie_state calls
+        self._sync_in_progress: bool = False
+
+        # Board dirty tracking — skip table rebuild when state hasn't changed
+        self._board_state_sig: str = ""
+
     def compose(self) -> ComposeResult:
         yield PriFlyHeader(id="header-bar")
         yield Static(
@@ -1659,6 +1676,7 @@ class PriFlyCommander(App):
         self._start_watchers()
 
         # Periodic legacy sync (catches agents started outside commander)
+        # Runs I/O in background to keep the main thread free
         self.set_interval(5.0, self._sync_legacy_agents)
 
         # Focus the board table
@@ -1667,8 +1685,10 @@ class PriFlyCommander(App):
         # Initial table render (so agents show immediately)
         self._refresh_ui()
 
-        # Show splash screen
-        self.push_screen(SplashScreen())
+        # Show splash — auto-dismisses when initial sync completes or after 3s
+        self._splash: Optional[SplashScreen] = SplashScreen()
+        self.push_screen(self._splash)
+        self.set_timer(3.0, self._dismiss_splash)
 
     def on_unmount(self) -> None:
         self._agent_mgr.shutdown()
@@ -1679,13 +1699,42 @@ class PriFlyCommander(App):
     # ── Legacy agent sync (worktree-based agents) ─────────────────────
 
     def _sync_legacy_agents(self) -> None:
-        """Read sortie state from worktrees and sync into the pilot roster."""
-        try:
-            state = read_sortie_state(project_dir=self._project_dir)
-        except Exception as e:
-            log.warning(f"Failed to read sortie state: {e}")
-            return
+        """Spawn a background thread to read sortie state and sync into the pilot roster.
 
+        read_sortie_state() hits the filesystem and spawns git subprocesses — running it
+        on the main thread at 5s intervals causes noticeable UI jank. We offload the I/O
+        to a daemon thread and apply results on the main thread via call_from_thread.
+        """
+        import threading
+        if self._sync_in_progress:
+            return
+        self._sync_in_progress = True
+
+        def _bg():
+            try:
+                state = read_sortie_state(project_dir=self._project_dir)
+                self.call_from_thread(self._apply_legacy_state, state)
+            except Exception as e:
+                log.warning(f"Failed to read sortie state: {e}")
+            finally:
+                self._sync_in_progress = False
+
+        threading.Thread(target=_bg, daemon=True).start()
+
+    def _dismiss_splash(self) -> None:
+        """Dismiss the splash screen if still showing."""
+        splash = getattr(self, "_splash", None)
+        if splash and not splash._dismissed:
+            splash._dismissed = True
+            try:
+                self.pop_screen()
+            except Exception:
+                pass
+        self._splash = None
+
+    def _apply_legacy_state(self, state) -> None:
+        """Apply sortie state to the pilot roster (main thread)."""
+        self._dismiss_splash()
         seen_tickets: set[str] = set()
         for agent in state.agents:
             tid = agent.ticket_id
@@ -2743,7 +2792,19 @@ class PriFlyCommander(App):
             f"echo 'ACTIVE' > /tmp/uss-tenkara/_prifly/miniboss-status\n"
             f"\n"
             f"claude --model opus "
-            f"'Read {directive_file} and follow all instructions.'\n"
+            f"--allowedTools 'Read' "
+            f"--allowedTools 'Write(**.sortie/**)' "
+            f"--allowedTools 'Write(**/.claude/worktrees/**)' "
+            f"--allowedTools 'Edit(**/.claude/worktrees/**)' "
+            f"--allowedTools 'Bash' "
+            f"--allowedTools 'mcp__linear__*' "
+            f"-- "
+            f"'Read {directive_file}. "
+            f"Then do these four things in order: "
+            f"1) Check {self._project_dir}/.claude/worktrees/ for open agents. "
+            f"2) Call mcp__linear__list_issues to fetch all Todo and In Progress tickets assigned to me. "
+            f"3) Write each ticket as a JSON mission file to {self._project_dir}/.sortie/mission-queue/ using Bash (mkdir -p first). "
+            f"4) Give a 5-10 line sitrep. Start now.'\n"
         )
         launch_script.chmod(0o755)
 
@@ -3481,7 +3542,8 @@ end tell
                 self._add_radio("PRI-FLY", "Failed to open browser", "error")
 
     def action_dismiss_selected(self) -> None:
-        """Remove a RECOVERED pilot from the board."""
+        """Remove a RECOVERED pilot from the board and delete their git worktree."""
+        import threading, shutil
         pilot = self._get_selected_pilot()
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
@@ -3491,10 +3553,43 @@ end tell
             return
         callsign = pilot.callsign
         tid = pilot.ticket_id
+        worktree_path = pilot.worktree_path
+        project_dir = self._project_dir
         self._roster.remove(callsign)
         self._legacy_agents.pop(tid, None)
+        self._board_state_sig = ""  # force table rebuild
         self._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
         self._refresh_ui()
+
+        if not worktree_path:
+            return
+
+        def _delete_worktree():
+            try:
+                result = subprocess.run(
+                    ["git", "worktree", "remove", "--force", worktree_path],
+                    cwd=project_dir,
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    self.call_from_thread(
+                        self._add_radio, "PRI-FLY",
+                        f"{callsign} worktree removed", "success",
+                    )
+                else:
+                    # Not a registered worktree (or git failed) — nuke the dir directly
+                    shutil.rmtree(worktree_path, ignore_errors=True)
+                    self.call_from_thread(
+                        self._add_radio, "PRI-FLY",
+                        f"{callsign} worktree directory deleted", "success",
+                    )
+            except Exception as e:
+                self.call_from_thread(
+                    self._add_radio, "PRI-FLY",
+                    f"Worktree cleanup error: {e}", "error",
+                )
+
+        threading.Thread(target=_delete_worktree, daemon=True).start()
 
     def action_open_terminal(self) -> None:
         """Open a plain terminal pane cd'd to the selected pilot's worktree, or project root."""
@@ -4151,6 +4246,19 @@ end tell
         hotkey.update(t)
 
     def _refresh_table(self) -> None:
+        pilots = self._roster.all_pilots()
+
+        # Skip full table rebuild when visible state hasn't changed — table.clear() +
+        # add_row() on every 3s tick is the biggest source of UI jank with active agents.
+        sig = "|".join(
+            f"{p.callsign}:{p.status}:{p.fuel_pct}:{p.tokens_used}:{p.error_count}"
+            f":{p.mood}:{p.flight_phase}:{p.status_hint}:{p.tool_calls}"
+            for p in sorted(pilots, key=lambda p: p.callsign)
+        )
+        if sig == self._board_state_sig:
+            return
+        self._board_state_sig = sig
+
         table = self.query_one("#agent-table", DataTable)
         # Remember selected pilot by callsign (stable across refreshes)
         prev_callsign = ""
@@ -4158,7 +4266,6 @@ end tell
             prev_callsign = self._sorted_pilots[table.cursor_row].callsign
         table.clear()
 
-        pilots = self._roster.all_pilots()
         self._sorted_pilots = sorted(pilots, key=lambda p: p.callsign)
 
         critical = []

@@ -109,16 +109,26 @@ def _extract_field(directive: str, field_name: str) -> str:
     return match.group(1).strip() if match else "Unknown"
 
 
+_branch_cache: dict[str, tuple[float, str]] = {}  # path -> (timestamp, branch)
+_BRANCH_CACHE_TTL = 60.0  # seconds before re-checking
+
+
 def _get_branch(worktree_path: Path) -> str:
+    key = str(worktree_path)
+    cached = _branch_cache.get(key)
+    if cached and (time.time() - cached[0]) < _BRANCH_CACHE_TTL:
+        return cached[1]
     try:
         result = subprocess.run(
             ["git", "branch", "--show-current"],
-            cwd=str(worktree_path),
+            cwd=key,
             capture_output=True, text=True, timeout=5,
         )
-        return result.stdout.strip() or "unknown"
+        branch = result.stdout.strip() or "unknown"
     except Exception:
-        return "unknown"
+        branch = "unknown"
+    _branch_cache[key] = (time.time(), branch)
+    return branch
 
 
 def _read_context(sortie_dir: Path) -> dict:
