@@ -974,6 +974,8 @@ class PriFlyHeader(Static):
                 pilot_keys.append(("K", "Compact", True))
             if status not in ("RECOVERED",):
                 pilot_keys.append(("W", "Wave-off", True))
+            if status in ("RECOVERED", "MAYDAY"):
+                pilot_keys.append(("Z", "Dismiss", True))
 
         # Render always-visible keys
         for i, (key, label) in enumerate(always_keys):
@@ -1597,6 +1599,7 @@ class PriFlyCommander(App):
         Binding("v", "start_server", "DevServer", priority=True),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True),
         Binding("t", "open_terminal", "Terminal", priority=True),
+        Binding("z", "dismiss_selected", "Dismiss", priority=True),
         # Navigation
         Binding("escape", "focus_board", "Board"),
         Binding("tab", "toggle_focus", "Focus", show=False),
@@ -3514,6 +3517,22 @@ end tell
                 self._add_radio("PRI-FLY", "Opening Linear inbox", "system")
             except Exception:
                 self._add_radio("PRI-FLY", "Failed to open browser", "error")
+
+    def action_dismiss_selected(self) -> None:
+        """Remove a RECOVERED pilot from the board."""
+        pilot = self._get_selected_pilot()
+        if not pilot:
+            self._add_radio("PRI-FLY", "No pilot selected", "error")
+            return
+        if pilot.status not in ("RECOVERED", "MAYDAY"):
+            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — only RECOVERED/MAYDAY can be dismissed", "error")
+            return
+        callsign = pilot.callsign
+        tid = pilot.ticket_id
+        self._roster.remove(callsign)
+        self._legacy_agents.pop(tid, None)
+        self._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
+        self._refresh_ui()
 
     def action_open_terminal(self) -> None:
         """Open a plain terminal pane cd'd to the project root."""

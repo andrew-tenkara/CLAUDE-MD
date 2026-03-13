@@ -47,6 +47,7 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 | `W` | Wave-off — hard kill + server cleanup |
 | `K` | Compact — trigger AAR refueling |
 | `X` | Recall — graceful wind-down |
+| `Z` | Dismiss — remove RECOVERED/MAYDAY from board |
 | `F` | Toggle flight strip visibility |
 | `Q` | Quit |
 
