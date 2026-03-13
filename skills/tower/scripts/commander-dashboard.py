@@ -1719,7 +1719,7 @@ class PriFlyCommander(App):
                 # New legacy agent — register in roster
                 pilot = self._roster.assign(
                     ticket_id=tid,
-                    model=agent.model,
+                    model=agent.model if agent.model not in ("unknown", "Unknown", "") else "sonnet",
                     mission_title=agent.title,
                     directive=f"(legacy worktree agent)\nBranch: {agent.branch}",
                 )

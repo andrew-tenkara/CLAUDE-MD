@@ -148,7 +148,11 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
         return None
 
     directive = _read_text(directive_path)
-    model = _read_text(sortie_dir / "model.txt") or "unknown"
+    model = _read_text(sortie_dir / "model.txt")
+    if not model:
+        # Fallback: read model from context.json (Claude reports its own model)
+        ctx = _read_context(sortie_dir)
+        model = ctx.get("model") or "sonnet"  # default to sonnet if truly unknown
 
     progress_raw = _read_text(sortie_dir / "progress.md")
     progress_lines = [l for l in progress_raw.split("\n") if l.strip()]
