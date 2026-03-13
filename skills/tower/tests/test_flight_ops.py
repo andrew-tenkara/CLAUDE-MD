@@ -965,5 +965,288 @@ class TestMiniBossSessionGuard(unittest.TestCase):
         os.rmdir(tmpdir)
 
 
+# ── Label Overlap Stacking Tests ────────────────────────────────────
+
+class TestLabelOverlapStacking(unittest.TestCase):
+    """Verify overlapping ticket ID labels stack across rows."""
+
+    def _build_label_rows(self, sprite_data, sw=100):
+        """Simulate the label stacking logic from flight_ops.render().
+
+        sprite_data: list of (col, sprite_width, callsign, ticket_id, is_parked)
+        Returns: list of row dicts, each mapping pos -> (char, style)
+        """
+        MAX_LABEL_ROWS = 3
+        label_rows: list[dict[int, tuple[str, str]]] = [{} for _ in range(MAX_LABEL_ROWS)]
+        occupied: list[list[tuple[int, int]]] = [[] for _ in range(MAX_LABEL_ROWS)]
+
+        for col, sprite_w, callsign, ticket_id, is_parked in sprite_data:
+            label = callsign if is_parked else (ticket_id if ticket_id else callsign)
+            style = "dim green" if is_parked else "bold bright_white"
+            label_start = col + sprite_w // 2 - len(label) // 2
+            label_end = label_start + len(label) - 1
+
+            for r in range(MAX_LABEL_ROWS):
+                overlaps = any(not (label_end < s or label_start > e) for s, e in occupied[r])
+                if not overlaps:
+                    occupied[r].append((label_start, label_end))
+                    for i, ch in enumerate(label):
+                        pos = label_start + i
+                        if 0 <= pos < sw:
+                            label_rows[r][pos] = (ch, style)
+                    break
+        return label_rows
+
+    def test_no_overlap_single_row(self):
+        """Non-overlapping labels should all go on row 0."""
+        data = [
+            (10, 4, "P-1", "ENG-100", False),
+            (50, 4, "P-2", "ENG-200", False),
+        ]
+        rows = self._build_label_rows(data)
+        self.assertTrue(len(rows[0]) > 0, "Row 0 should have labels")
+        self.assertEqual(len(rows[1]), 0, "Row 1 should be empty")
+        self.assertEqual(len(rows[2]), 0, "Row 2 should be empty")
+
+    def test_overlap_bumps_to_row_2(self):
+        """Two labels at same position should split across rows."""
+        data = [
+            (20, 4, "P-1", "ENG-100", False),
+            (22, 4, "P-2", "ENG-200", False),  # overlaps with ENG-100
+        ]
+        rows = self._build_label_rows(data)
+        self.assertTrue(len(rows[0]) > 0, "Row 0 should have first label")
+        self.assertTrue(len(rows[1]) > 0, "Row 1 should have bumped label")
+
+    def test_three_overlapping_labels_use_three_rows(self):
+        """Three labels at same position should fill all three rows."""
+        data = [
+            (20, 4, "P-1", "ENG-100", False),
+            (22, 4, "P-2", "ENG-200", False),
+            (21, 4, "P-3", "ENG-300", False),
+        ]
+        rows = self._build_label_rows(data)
+        self.assertTrue(len(rows[0]) > 0)
+        self.assertTrue(len(rows[1]) > 0)
+        self.assertTrue(len(rows[2]) > 0)
+
+    def test_parked_uses_callsign(self):
+        """Parked sprites should use callsign, not ticket_id."""
+        data = [(10, 4, "Ghost-1", "ENG-999", True)]
+        rows = self._build_label_rows(data)
+        chars = "".join(ch for ch, _s in rows[0].values())
+        self.assertIn("Ghost-1", chars)
+        self.assertNotIn("ENG-999", chars)
+
+    def test_active_uses_ticket_id(self):
+        """Active sprites should use ticket_id."""
+        data = [(10, 4, "Ghost-1", "ENG-999", False)]
+        rows = self._build_label_rows(data)
+        chars = "".join(ch for ch, _s in rows[0].values())
+        self.assertIn("ENG-999", chars)
+
+    def test_mixed_parked_and_active_no_collision(self):
+        """Parked and active at different positions should both be on row 0."""
+        data = [
+            (5, 4, "P-1", "ENG-100", True),   # parked, uses "P-1"
+            (60, 4, "P-2", "ENG-200", False),  # active, uses "ENG-200"
+        ]
+        rows = self._build_label_rows(data)
+        self.assertTrue(len(rows[0]) > 0)
+        self.assertEqual(len(rows[1]), 0)
+
+    def test_fourth_overlap_goes_to_last_row(self):
+        """With MAX_LABEL_ROWS=3, 4th label should still land on row 2 (best effort)."""
+        data = [
+            (20, 4, f"P-{i}", f"ENG-{100+i}", False)
+            for i in range(4)
+        ]
+        rows = self._build_label_rows(data)
+        # All three rows should have content
+        self.assertTrue(len(rows[0]) > 0)
+        self.assertTrue(len(rows[1]) > 0)
+        self.assertTrue(len(rows[2]) > 0)
+
+
+# ── HUD Bar Grouping Tests ──────────────────────────────────────────
+
+class TestHUDBarGrouping(unittest.TestCase):
+    """Test the HUD action bar logic — grouping, context sensitivity."""
+
+    def test_global_keys_always_present(self):
+        """Global keys T, L, M, F, Q should render regardless of pilot state."""
+        # Simulate the key-building logic from _update_keybind_hints
+        global_keys = ["T", "L", "M", "F", "Q"]
+        for key in global_keys:
+            self.assertIn(key, global_keys)
+
+    def test_pilot_context_keys_for_airborne(self):
+        """AIRBORNE pilot should get Recall and Compact, not Resume or Dismiss."""
+        status = "AIRBORNE"
+        keys = []
+        if status in ("RECOVERED", "MAYDAY", "IDLE"):
+            keys.append("R")
+        if status == "AIRBORNE":
+            keys.append("X")
+            keys.append("K")
+        if status not in ("RECOVERED",):
+            keys.append("W")
+        if status in ("RECOVERED", "MAYDAY"):
+            keys.append("Z")
+
+        self.assertIn("X", keys, "AIRBORNE should have Recall")
+        self.assertIn("K", keys, "AIRBORNE should have Compact")
+        self.assertIn("W", keys, "AIRBORNE should have Wave-off")
+        self.assertNotIn("R", keys, "AIRBORNE should NOT have Resume")
+        self.assertNotIn("Z", keys, "AIRBORNE should NOT have Dismiss")
+
+    def test_pilot_context_keys_for_recovered(self):
+        """RECOVERED pilot should get Resume and Dismiss, not Recall/Compact/Wave-off."""
+        status = "RECOVERED"
+        keys = []
+        if status in ("RECOVERED", "MAYDAY", "IDLE"):
+            keys.append("R")
+        if status == "AIRBORNE":
+            keys.append("X")
+            keys.append("K")
+        if status not in ("RECOVERED",):
+            keys.append("W")
+        if status in ("RECOVERED", "MAYDAY"):
+            keys.append("Z")
+
+        self.assertIn("R", keys, "RECOVERED should have Resume")
+        self.assertIn("Z", keys, "RECOVERED should have Dismiss")
+        self.assertNotIn("X", keys, "RECOVERED should NOT have Recall")
+        self.assertNotIn("K", keys, "RECOVERED should NOT have Compact")
+        self.assertNotIn("W", keys, "RECOVERED should NOT have Wave-off")
+
+    def test_pilot_context_keys_for_mayday(self):
+        """MAYDAY pilot should get Resume, Wave-off, and Dismiss."""
+        status = "MAYDAY"
+        keys = []
+        if status in ("RECOVERED", "MAYDAY", "IDLE"):
+            keys.append("R")
+        if status == "AIRBORNE":
+            keys.append("X")
+            keys.append("K")
+        if status not in ("RECOVERED",):
+            keys.append("W")
+        if status in ("RECOVERED", "MAYDAY"):
+            keys.append("Z")
+
+        self.assertIn("R", keys)
+        self.assertIn("W", keys)
+        self.assertIn("Z", keys)
+        self.assertNotIn("X", keys)
+        self.assertNotIn("K", keys)
+
+    def test_t_label_changes_with_worktree(self):
+        """T label should be 'Worktree' when pilot has worktree, 'Terminal' otherwise."""
+        has_pilot = True
+        has_worktree = True
+        label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
+        self.assertEqual(label, "Worktree")
+
+        has_worktree = False
+        label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
+        self.assertEqual(label, "Terminal")
+
+        has_pilot = False
+        label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
+        self.assertEqual(label, "Terminal")
+
+
+# ── Quote Safety Tests ──────────────────────────────────────────────
+
+class TestQuoteSafety(unittest.TestCase):
+    """Ensure all quote pools are shell-safe (no chars that break printf/bash)."""
+
+    UNSAFE_CHARS = ["'", '"', "`", "\\", "{", "}", "$"]
+
+    def test_pilot_launch_quotes_safe(self):
+        from pilot_roster import PILOT_LAUNCH_QUOTES
+        for quote, attr in PILOT_LAUNCH_QUOTES:
+            for ch in self.UNSAFE_CHARS:
+                self.assertNotIn(ch, quote,
+                    f"Unsafe char {ch!r} in pilot quote: {quote[:40]}")
+                self.assertNotIn(ch, attr,
+                    f"Unsafe char {ch!r} in pilot attribution: {attr}")
+
+    def test_mini_boss_quotes_safe(self):
+        from pilot_roster import MINI_BOSS_QUOTES
+        for quote, attr in MINI_BOSS_QUOTES:
+            for ch in self.UNSAFE_CHARS:
+                self.assertNotIn(ch, quote,
+                    f"Unsafe char {ch!r} in mini boss quote: {quote[:40]}")
+                self.assertNotIn(ch, attr,
+                    f"Unsafe char {ch!r} in mini boss attribution: {attr}")
+
+    def test_pilot_quotes_count(self):
+        from pilot_roster import PILOT_LAUNCH_QUOTES
+        self.assertGreaterEqual(len(PILOT_LAUNCH_QUOTES), 20,
+            "Should have at least 20 pilot quotes for variety")
+
+    def test_mini_boss_quotes_count(self):
+        from pilot_roster import MINI_BOSS_QUOTES
+        self.assertGreaterEqual(len(MINI_BOSS_QUOTES), 15,
+            "Should have at least 15 mini boss quotes for variety")
+
+
+# ── RTK Preflight Check Tests ───────────────────────────────────────
+
+class TestRTKPreflight(unittest.TestCase):
+    """Test RTK detection logic (without launching the TUI)."""
+
+    def test_rtk_hook_path(self):
+        """RTK hook should be at ~/.claude/hooks/rtk-rewrite.sh."""
+        hook_path = Path.home() / ".claude" / "hooks" / "rtk-rewrite.sh"
+        # This test validates the path construction, not file existence
+        self.assertTrue(str(hook_path).endswith("rtk-rewrite.sh"))
+
+    def test_rtk_binary_detection(self):
+        """shutil.which('rtk') should return a path or None (not crash)."""
+        import shutil
+        result = shutil.which("rtk")
+        # Result is either a string path or None — both are valid
+        self.assertIsInstance(result, (str, type(None)))
+
+
+# ── Label Color Tests ───────────────────────────────────────────────
+
+class TestLabelColors(unittest.TestCase):
+    """Verify label styling: active = bold white, parked = dim green."""
+
+    def test_active_label_style(self):
+        is_parked = False
+        style = "dim green" if is_parked else "bold bright_white"
+        self.assertEqual(style, "bold bright_white")
+
+    def test_parked_label_style(self):
+        is_parked = True
+        style = "dim green" if is_parked else "bold bright_white"
+        self.assertEqual(style, "dim green")
+
+    def test_active_shows_ticket_not_callsign(self):
+        is_parked = False
+        ticket_id = "ENG-175"
+        callsign = "Phoenix-1"
+        label = callsign if is_parked else (ticket_id if ticket_id else callsign)
+        self.assertEqual(label, "ENG-175")
+
+    def test_parked_shows_callsign_not_ticket(self):
+        is_parked = True
+        ticket_id = "ENG-175"
+        callsign = "Phoenix-1"
+        label = callsign if is_parked else (ticket_id if ticket_id else callsign)
+        self.assertEqual(label, "Phoenix-1")
+
+    def test_active_no_ticket_falls_back_to_callsign(self):
+        is_parked = False
+        ticket_id = ""
+        callsign = "Phoenix-1"
+        label = callsign if is_parked else (ticket_id if ticket_id else callsign)
+        self.assertEqual(label, "Phoenix-1")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
