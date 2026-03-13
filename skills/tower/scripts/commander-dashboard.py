@@ -1710,15 +1710,24 @@ class PriFlyCommander(App):
                 pilot = pilots_for_ticket[0]
             else:
                 # New legacy agent — register in roster
+                # If title == ticket_id, try Linear lookup
+                title = agent.title
+                if title == tid and is_ticket_id(tid):
+                    try:
+                        ticket = fetch_ticket(tid)
+                        if ticket:
+                            title = ticket.title[:60]
+                    except Exception:
+                        pass
                 pilot = self._roster.assign(
                     ticket_id=tid,
                     model=agent.model if agent.model not in ("unknown", "Unknown", "") else "sonnet",
-                    mission_title=agent.title,
+                    mission_title=title,
                     directive=f"(legacy worktree agent)\nBranch: {agent.branch}",
                 )
                 self._add_radio(
                     pilot.callsign,
-                    f"DETECTED — {tid}: {agent.title} ({agent.model})",
+                    f"DETECTED — {tid}: {title} ({agent.model})",
                     "system",
                 )
 
@@ -4194,7 +4203,7 @@ end tell
             mission = Text()
             mission.append(f"{pilot.ticket_id}", style="bold")
             if pilot.mission_title and pilot.mission_title != pilot.ticket_id:
-                mission.append(f"\n{pilot.mission_title[:35]}", style="grey70")
+                mission.append(f"\n{pilot.mission_title[:50]}", style="grey70")
             if pilot.flight_phase:
                 mission.append(f"\n» {pilot.flight_phase}", style="italic cyan")
             if pilot.status_hint:

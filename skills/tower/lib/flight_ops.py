@@ -775,18 +775,21 @@ class FlightOpsStrip(Static):
                 # Show new jet on deck (already on sprite_overlays via F14_PARKED)
                 pass
 
-        # Labels under sprites: ticket ID follows the sprite,
-        # callsign only for recovered/parked sprites.
-        # Show for both lanes — label row is the only text ID on the strip.
+        # Labels under sprites: ticket ID follows active sprites,
+        # callsign for parked/recovered. Color-coded by status.
+        # Build as (pos, char, style) tuples for per-label coloring.
+        label_cells: list[tuple[int, str, str]] = []
         for col, _lane, txt, _style, callsign in sprite_overlays:
             sprite = self._sprites.get(callsign)
             is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
             label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
+            style = "dim green" if is_parked else "bold bright_white"
             label_start = col + len(txt) // 2 - len(label) // 2
             for i, ch in enumerate(label):
                 pos = label_start + i
                 if 0 <= pos < sw:
-                    row_label[pos] = ch
+                    label_cells.append((pos, ch, style))
+                    row_label[pos] = ch  # keep for bounds
 
         # ── Compose Rich Text output ──────────────────────────────────
 
@@ -826,9 +829,17 @@ class FlightOpsStrip(Static):
         self._render_aux_row(result, row_aux, sw, aux_overlays)
         result.append("║\n", style="dim green")
 
-        # Label row: callsigns
+        # Label row: ticket IDs (active) / callsigns (parked), color-coded
         result.append(" ║", style="dim green")
-        result.append("".join(row_label), style="green")
+        # Build style map from label_cells
+        label_style_map: dict[int, str] = {}
+        for pos, _ch, style in label_cells:
+            label_style_map[pos] = style
+        # Render char-by-char with per-label styling
+        for pos in range(sw):
+            ch = row_label[pos]
+            style = label_style_map.get(pos, "dim green")
+            result.append(ch, style=style)
         result.append("║\n", style="dim green")
 
         # Bottom border
