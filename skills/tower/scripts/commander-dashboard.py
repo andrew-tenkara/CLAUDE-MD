@@ -2684,12 +2684,17 @@ class PriFlyCommander(App):
             "To deploy a sortie agent on a ticket, use the deploy script. "
             "NEVER build `claude` CLI commands by hand — the quoting will break.\n"
             f"  bash '{deploy_script}' <TICKET-ID> --model <sonnet|opus|haiku> "
-            f"--directive '<directive text>' --project-dir '{self._project_dir}'\n"
+            f"--branch '<linear-branch-name>' --directive '<directive text>' --project-dir '{self._project_dir}'\n"
+            "IMPORTANT: Always pass --branch with the ticket's branchName from Linear "
+            "(e.g. eng/eng-200-auth-token-rotation). Never invent a branch name. "
+            "If the Linear ticket has no branchName, omit --branch and the script will use sortie/<ticket-id>.\n"
             "Examples:\n"
             f"  bash '{deploy_script}' ENG-200 --model sonnet "
+            f"--branch 'eng/eng-200-auth-token-rotation' "
             f"--directive 'Implement the auth refresh token rotation as described in the ticket.' "
             f"--project-dir '{self._project_dir}'\n"
             f"  bash '{deploy_script}' ENG-201 --model opus "
+            f"--branch 'eng/eng-201-fix-webhook-race' "
             f"--directive 'Fix the race condition in the webhook handler. See PR #590 comments.' "
             f"--project-dir '{self._project_dir}'\n"
             "The script handles: worktree creation, .sortie/ protocol files, env setup, "
@@ -2705,6 +2710,7 @@ class PriFlyCommander(App):
             "{\n"
             '  "id": "ENG-200",\n'
             '  "title": "Auth token rotation",\n'
+            '  "branch_name": "eng/eng-200-auth-token-rotation",\n'
             '  "source": "linear",\n'
             '  "priority": 2,\n'
             '  "model": "sonnet",\n'
@@ -2791,6 +2797,11 @@ class PriFlyCommander(App):
             f"}}\n"
             f"trap cleanup_miniboss EXIT\n"
             f"echo 'ACTIVE' > /tmp/uss-tenkara/_prifly/miniboss-status\n"
+            f"\n"
+            f"# Register our own iTerm session so deploy-agent.sh splits from this pane\n"
+            f"if [ -n \"$ITERM_SESSION_ID\" ] && [ -f /tmp/uss-tenkara/_prifly/agents_window_id ]; then\n"
+            f"  echo \"$ITERM_SESSION_ID\" > /tmp/uss-tenkara/_prifly/agents_last_session_id\n"
+            f"fi\n"
             f"\n"
             f"claude --model opus "
             f"--allowedTools 'Read' "
