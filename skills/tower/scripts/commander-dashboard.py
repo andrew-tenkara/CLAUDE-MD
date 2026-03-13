@@ -956,10 +956,8 @@ class PriFlyHeader(Static):
 
             # Server — only after pane is open and has worktree
             if has_pane and has_worktree:
-                if not has_server:
-                    pilot_keys.append(("V", "Start Server", True))
-                else:
-                    pilot_keys.append(("V", "Server ✓", False))
+                pilot_keys.append(("V", "Start Server", True))
+                if has_server:
                     pilot_keys.append(("O", "Open Browser", True))
 
             # PR — if worktree exists
