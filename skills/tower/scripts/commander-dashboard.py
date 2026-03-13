@@ -929,78 +929,7 @@ class PriFlyHeader(Static):
         header.append("  │  ", style="grey50")
         header.append(datetime.now().strftime("%H:%M:%S LOCAL"), style="white")
 
-        # ── HUD Action Bar ──────────────────────────────────────────
-        # Game design: group by intent, separate visually, color by state
-        # Row 1: Global — workspace | view | system
-        # Row 2: Pilot context — connection | dev tools | flight ops
-        header.append("\n")
-
-        # Get selected pilot context
-        pilot = app._get_selected_pilot() if hasattr(app, '_get_selected_pilot') else None
-        has_pilot = pilot is not None
-        status = pilot.status if has_pilot else None
-        has_pane = has_pilot and pilot.callsign in getattr(app, '_iterm_panes', set())
-        has_worktree = has_pilot and bool(pilot.worktree_path)
-        has_server = has_pilot and bool(app._extract_server_url(pilot)) if has_pilot else False
-
-        def _key(k: str, label: str, active: bool = True) -> None:
-            if active:
-                header.append(f" [{k}]", style="bold cyan")
-                header.append(label, style="grey70")
-            else:
-                header.append(f" [{k}]", style="grey42")
-                header.append(label, style="grey42")
-
-        def _sep() -> None:
-            header.append("  \u2502  ", style="grey30")
-
-        # ── Row 1: Global bar ──
-        # Workspace group
-        t_label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
-        _key("T", t_label)
-        _key("L", "Linear")
-        _key("M", "Boss")
-        _sep()
-        # View group
-        _key("F", "Flight")
-        _sep()
-        # System group
-        _key("Q", "Quit")
-
-        # ── Row 2: Pilot context bar (only when pilot selected) ──
-        if has_pilot:
-            header.append("\n")
-            # Pilot identity tag
-            status_style = STATUS_COLORS.get(status, "white")
-            header.append(f" {pilot.callsign}", style="bold yellow")
-            header.append(f" {status}", style=status_style)
-
-            _sep()
-
-            # Connection group — pane, server, browser, PR
-            if not has_pane:
-                _key("D", "Pane")
-            else:
-                _key("D", "Pane", False)
-            if has_pane and has_worktree:
-                _key("V", "Server")
-                if has_server:
-                    _key("O", "Browser")
-            if has_worktree:
-                _key("P", "PR")
-
-            _sep()
-
-            # Flight ops group — status-dependent actions
-            if status in ("RECOVERED", "MAYDAY", "IDLE"):
-                _key("R", "Resume")
-            if status == "AIRBORNE":
-                _key("X", "Recall")
-                _key("K", "Compact")
-            if status not in ("RECOVERED",):
-                _key("W", "Wave-off")
-            if status in ("RECOVERED", "MAYDAY"):
-                _key("Z", "Dismiss")
+        # HUD action bar is rendered in #hotkey-bar widget via _update_keybind_hints()
 
         return header
 
@@ -1443,7 +1372,7 @@ class PriFlyCommander(App):
     Screen { background: $surface; }
 
     #header-bar {
-        dock: top; height: 4;
+        dock: top; height: 2;
         background: $surface-darken-2;
         padding: 0 1;
     }
@@ -1587,25 +1516,23 @@ class PriFlyCommander(App):
     """
 
     BINDINGS = [
-        # Global
-        Binding("d", "open_comms", "Open Pane", priority=True),
-        Binding("f", "toggle_flight_strip", "Flight", priority=True),
-        Binding("l", "linear_browse", "Linear", priority=True),
-        Binding("o", "open_browser", "Browser", priority=True),
-        Binding("p", "open_pr", "PR", priority=True),
-        # Context-sensitive (act on selected pilot)
-        Binding("r", "resume_selected", "Resume", priority=True),
-        Binding("w", "waveoff_selected", "Wave-off", priority=True),
-        Binding("x", "recall_selected", "Recall", priority=True),
-        Binding("k", "compact_selected", "Compact", priority=True),
-        Binding("v", "start_server", "DevServer", priority=True),
-        Binding("m", "relaunch_miniboss", "Mini Boss", priority=True),
-        Binding("t", "open_terminal", "Terminal", priority=True),
-        Binding("z", "dismiss_selected", "Dismiss", priority=True),
-        # Navigation
-        Binding("escape", "focus_board", "Board"),
+        # All show=False — HUD bar in PriFlyHeader handles display
+        Binding("d", "open_comms", "Open Pane", priority=True, show=False),
+        Binding("f", "toggle_flight_strip", "Flight", priority=True, show=False),
+        Binding("l", "linear_browse", "Linear", priority=True, show=False),
+        Binding("o", "open_browser", "Browser", priority=True, show=False),
+        Binding("p", "open_pr", "PR", priority=True, show=False),
+        Binding("r", "resume_selected", "Resume", priority=True, show=False),
+        Binding("w", "waveoff_selected", "Wave-off", priority=True, show=False),
+        Binding("x", "recall_selected", "Recall", priority=True, show=False),
+        Binding("k", "compact_selected", "Compact", priority=True, show=False),
+        Binding("v", "start_server", "DevServer", priority=True, show=False),
+        Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
+        Binding("t", "open_terminal", "Terminal", priority=True, show=False),
+        Binding("z", "dismiss_selected", "Dismiss", priority=True, show=False),
+        Binding("escape", "focus_board", "Board", show=False),
         Binding("tab", "toggle_focus", "Focus", show=False),
-        Binding("q", "quit", "Quit"),
+        Binding("q", "quit", "Quit", show=False),
     ]
 
     # Reactive animation states
@@ -4154,85 +4081,62 @@ end tell
             t.append("Opt+Drag", style="dim")
             t.append(" Select+Copy", style="grey42")
         else:
-            # Board mode — row 1: agent actions
-            t.append(" D", style="bold green")
-            t.append(" Pane  ", style="grey50")
-            t.append("V", style="bold bright_white")
-            t.append(" Server  ", style="grey50")
-            t.append("O", style="bold bright_white")
-            t.append(" Browser  ", style="grey50")
-            t.append("P", style="bold bright_white")
-            t.append(" PR  ", style="grey50")
-            t.append("L", style="bold bright_white")
-            t.append(" Linear  ", style="grey50")
-            t.append("R", style="bold bright_white")
-            t.append(" Resume  ", style="grey50")
-            # Row 2: more actions + context
-            t.append("\n")
-            t.append(" M", style="bold magenta")
-            t.append(" Mini Boss  ", style="grey50")
-            t.append("W", style="bold red")
-            t.append(" Wave-off  ", style="grey50")
-            t.append("K", style="bold cyan")
-            t.append(" Compact  ", style="grey50")
-            t.append("X", style="bold yellow")
-            t.append(" Recall  ", style="grey50")
-            t.append("F", style="bold bright_white")
-            t.append(" Flight  ", style="grey50")
-            t.append("Q", style="bold bright_white")
-            t.append(" Quit", style="grey50")
-
-            # Context-sensitive actions for selected pilot
-            table = self.query_one("#agent-table", DataTable)
-            if table.row_count > 0 and table.cursor_row < len(self._sorted_pilots):
-                pilot = self._sorted_pilots[table.cursor_row]
-                agent = self._agent_mgr.get(pilot.callsign)
-                is_managed = bool(agent)
-                is_alive = is_managed and agent.is_alive
-
-                t.append("  │ ", style="grey30")
-                t.append(f"{pilot.callsign}", style="bold bright_white")
-                if is_managed:
-                    t.append(" ●", style="green")
+            # Board mode — HUD action bar with game-style grouping
+            def _key(k: str, label: str, style_key: str = "bold cyan", active: bool = True) -> None:
+                if active:
+                    t.append(f" [{k}]", style=style_key)
+                    t.append(label, style="grey70")
                 else:
-                    t.append(" ○", style="grey42")
+                    t.append(f" [{k}]", style="grey42")
+                    t.append(label, style="grey42")
 
-                has_server = bool(self._extract_server_url(pilot))
+            def _sep() -> None:
+                t.append("  \u2502  ", style="grey30")
 
-                if pilot.status == "AIRBORNE":
-                    t.append("  D", style="bold bright_white")
-                    t.append(" Pane ", style="grey50")
-                    t.append("P", style="bold bright_white")
-                    t.append(" PR ", style="grey50")
+            # Get selected pilot context
+            pilot = self._get_selected_pilot()
+            has_pilot = pilot is not None
+            status = pilot.status if has_pilot else None
+            has_pane = has_pilot and pilot.callsign in self._iterm_panes
+            has_worktree = has_pilot and bool(pilot.worktree_path)
+            has_server = has_pilot and bool(self._extract_server_url(pilot))
+
+            # Row 1: Global — workspace | view | system
+            t_label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
+            _key("T", t_label)
+            _key("L", "Linear")
+            _key("M", "Boss", "bold magenta")
+            _sep()
+            _key("F", "Flight")
+            _sep()
+            _key("Q", "Quit")
+
+            # Row 2: Pilot context — identity | connection + dev | flight ops
+            if has_pilot:
+                t.append("\n")
+                status_style = STATUS_COLORS.get(status, "white")
+                t.append(f" {pilot.callsign}", style="bold yellow")
+                t.append(f" {status}", style=status_style)
+                _sep()
+                # Connection group
+                _key("D", "Pane", active=not has_pane)
+                if has_pane and has_worktree:
+                    _key("V", "Server")
                     if has_server:
-                        t.append("O", style="bold bright_white")
-                        t.append(" Browser ", style="grey50")
-                    t.append("V", style="bold bright_white")
-                    t.append(" Server ", style="grey50")
-                    t.append("X", style="bold yellow")
-                    t.append(" Recall ", style="grey50")
-                    t.append("W", style="bold red")
-                    t.append(" Wave-off ", style="grey50")
-                    if pilot.fuel_pct < 60:
-                        t.append("K", style="bold cyan")
-                        t.append(" Compact ", style="grey50")
-                elif pilot.status == "RECOVERED":
-                    t.append("  R", style="bold green")
-                    t.append(" Resume ", style="grey50")
-                    t.append("P", style="bold bright_white")
-                    t.append(" PR ", style="grey50")
-                    t.append("D", style="bold bright_white")
-                    t.append(" Pane ", style="grey50")
-                elif pilot.status in ("MAYDAY", "IDLE"):
-                    t.append("  R", style="bold green")
-                    t.append(" Resume ", style="grey50")
-                    t.append("P", style="bold bright_white")
-                    t.append(" PR ", style="grey50")
-                    t.append("D", style="bold bright_white")
-                    t.append(" Pane ", style="grey50")
-                    if is_alive:
-                        t.append("W", style="bold red")
-                        t.append(" Wave-off ", style="grey50")
+                        _key("O", "Browser")
+                if has_worktree:
+                    _key("P", "PR")
+                _sep()
+                # Flight ops group
+                if status in ("RECOVERED", "MAYDAY", "IDLE"):
+                    _key("R", "Resume", "bold green")
+                if status == "AIRBORNE":
+                    _key("X", "Recall", "bold yellow")
+                    _key("K", "Compact", "bold cyan")
+                if status not in ("RECOVERED",):
+                    _key("W", "Wave-off", "bold red")
+                if status in ("RECOVERED", "MAYDAY"):
+                    _key("Z", "Dismiss")
 
         hotkey.update(t)
 
