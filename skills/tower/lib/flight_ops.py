@@ -567,19 +567,44 @@ class FlightOpsStrip(Static):
             # ── Column clamp ─────────────────────────────────────────
             sprite.col = max(0, min(sw - 8, sprite.col))
 
-        # Lane deconfliction — spread overlapping sprites across lanes
-        sprite_list = sorted(self._sprites.values(), key=lambda s: s.col)
-        for s in sprite_list:
+        # Lane deconfliction — use both lanes to prevent crowding
+        # Step 1: Parked sprites alternate lanes (even index=0, odd index=1)
+        parked = sorted(
+            [s for s in self._sprites.values() if s.phase in ("DECK_PARK", "TAXI_BACK")],
+            key=lambda s: s.col,
+        )
+        for idx, s in enumerate(parked):
+            s.lane = idx % 2
+
+        # Step 2: Idle sprites alternate lanes, opposite parity from parked
+        idle = sorted(
+            [s for s in self._sprites.values() if s.phase == "DECK_IDLE"],
+            key=lambda s: s.col,
+        )
+        idle_start_lane = (len(parked)) % 2  # continue alternation
+        for idx, s in enumerate(idle):
+            s.lane = (idle_start_lane + idx) % 2
+
+        # Step 3: Active sprites (flying) — default to lane 0, bump overlaps to lane 1
+        active = sorted(
+            [s for s in self._sprites.values()
+             if s.phase not in ("DECK_PARK", "TAXI_BACK", "DECK_IDLE", "ELEVATOR")],
+            key=lambda s: s.col,
+        )
+        for s in active:
             s.lane = 0
-        for i in range(len(sprite_list)):
-            for j in range(i + 1, len(sprite_list)):
-                if abs(sprite_list[i].col - sprite_list[j].col) < 8:
-                    # Alternate lane assignment — if lane 1 is also taken, nudge col
-                    if sprite_list[j].lane == 0:
-                        sprite_list[j].lane = 1
+        for i in range(len(active)):
+            for j in range(i + 1, len(active)):
+                if abs(active[i].col - active[j].col) < 8:
+                    if active[j].lane == 0:
+                        active[j].lane = 1
                     else:
-                        # Both lanes occupied near this col — nudge right
-                        sprite_list[j].col = sprite_list[i].col + 8
+                        active[j].col = active[i].col + 8
+
+        # Step 4: Elevator sprites — lane 0
+        for s in self._sprites.values():
+            if s.phase == "ELEVATOR":
+                s.lane = 0
 
     # ── Sprite text / style helpers ───────────────────────────────────
 
@@ -750,18 +775,18 @@ class FlightOpsStrip(Static):
                 # Show new jet on deck (already on sprite_overlays via F14_PARKED)
                 pass
 
-        # Labels under main-lane sprites: ticket ID follows the sprite,
-        # callsign only for recovered/parked sprites
-        for col, lane, txt, _style, callsign in sprite_overlays:
-            if lane == 0:
-                sprite = self._sprites.get(callsign)
-                is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
-                label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
-                label_start = col + len(txt) // 2 - len(label) // 2
-                for i, ch in enumerate(label):
-                    pos = label_start + i
-                    if 0 <= pos < sw:
-                        row_label[pos] = ch
+        # Labels under sprites: ticket ID follows the sprite,
+        # callsign only for recovered/parked sprites.
+        # Show for both lanes — label row is the only text ID on the strip.
+        for col, _lane, txt, _style, callsign in sprite_overlays:
+            sprite = self._sprites.get(callsign)
+            is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
+            label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
+            label_start = col + len(txt) // 2 - len(label) // 2
+            for i, ch in enumerate(label):
+                pos = label_start + i
+                if 0 <= pos < sw:
+                    row_label[pos] = ch
 
         # ── Compose Rich Text output ──────────────────────────────────
 

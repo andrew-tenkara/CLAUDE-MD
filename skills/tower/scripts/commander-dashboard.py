@@ -929,18 +929,74 @@ class PriFlyHeader(Static):
         header.append("  │  ", style="grey50")
         header.append(datetime.now().strftime("%H:%M:%S LOCAL"), style="white")
 
-        # Hotkey bar
+        # Context-sensitive hotkey bar — only show what the user can do RIGHT NOW
         header.append("\n")
-        keys = [
-            ("D", "Open Pane"), ("V", "DevServer"), ("O", "Browser"), ("P", "PR"),
-            ("L", "Linear"), ("M", "Mini Boss"), ("R", "Resume"), ("W", "Wave-off"),
-            ("K", "Compact"), ("F", "Flight"), ("X", "Recall"), ("Q", "Quit"),
+
+        # Get selected pilot context
+        pilot = app._get_selected_pilot() if hasattr(app, '_get_selected_pilot') else None
+        has_pilot = pilot is not None
+        status = pilot.status if has_pilot else None
+        has_pane = has_pilot and pilot.callsign in getattr(app, '_iterm_panes', set())
+        has_worktree = has_pilot and bool(pilot.worktree_path)
+        has_server = has_pilot and bool(app._extract_server_url(pilot)) if has_pilot else False
+
+        # Always-visible keys (no pilot needed)
+        always_keys: list[tuple[str, str]] = [
+            ("L", "Linear"), ("M", "Mini Boss"), ("F", "Flight"), ("Q", "Quit"),
         ]
-        for i, (key, label) in enumerate(keys):
+
+        # Pilot-dependent keys — only show when relevant
+        pilot_keys: list[tuple[str, str, bool]] = []
+        if has_pilot:
+            # Pane management — D to open, or show it's open
+            if not has_pane:
+                pilot_keys.append(("D", "Open Pane", True))
+            else:
+                pilot_keys.append(("D", "Pane ✓", False))
+
+            # Server — only after pane is open and has worktree
+            if has_pane and has_worktree:
+                if not has_server:
+                    pilot_keys.append(("V", "Start Server", True))
+                else:
+                    pilot_keys.append(("V", "Server ✓", False))
+                    pilot_keys.append(("O", "Open Browser", True))
+
+            # PR — if worktree exists
+            if has_worktree:
+                pilot_keys.append(("P", "PR", True))
+
+            # Status-dependent actions
+            if status in ("RECOVERED", "MAYDAY", "IDLE"):
+                pilot_keys.append(("R", "Resume", True))
+            if status == "AIRBORNE":
+                pilot_keys.append(("X", "Recall", True))
+                pilot_keys.append(("K", "Compact", True))
+            if status not in ("RECOVERED",):
+                pilot_keys.append(("W", "Wave-off", True))
+
+        # Render always-visible keys
+        for i, (key, label) in enumerate(always_keys):
             if i > 0:
                 header.append(" ", style="grey30")
             header.append(f"[{key}]", style="bold cyan")
             header.append(label, style="grey70")
+
+        # Render pilot-context keys on second row
+        if pilot_keys:
+            header.append("\n")
+            if has_pilot:
+                header.append(f"  {pilot.callsign}", style="bold yellow")
+                header.append(": ", style="grey50")
+            for i, (key, label, active) in enumerate(pilot_keys):
+                if i > 0:
+                    header.append(" ", style="grey30")
+                if active:
+                    header.append(f"[{key}]", style="bold cyan")
+                    header.append(label, style="grey70")
+                else:
+                    header.append(f"[{key}]", style="grey42")
+                    header.append(label, style="grey42")
 
         return header
 
@@ -3551,10 +3607,10 @@ end tell
         except (json.JSONDecodeError, OSError):
             pass
 
-        # 3. Scan agent conversation buffer (most recent first)
+        # 3. Scan agent conversation buffer (most recent 200 entries only)
         session = self._agent_mgr.get(pilot.callsign) if hasattr(self, '_agent_mgr') else None
         if session:
-            for entry in reversed(session.conversation):
+            for entry in session.conversation[-200:][::-1]:
                 match = url_re.search(entry.content)
                 if match:
                     return match.group(1)
