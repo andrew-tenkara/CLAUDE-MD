@@ -37,8 +37,8 @@ p.write_text(json.dumps(cfg, indent=2) + '\n')
 "
 fi
 
-# Ensure dependencies (fast path: skip pip if already importable)
-python3 -c "import textual; import watchdog" 2>/dev/null || pip3 install -q textual watchdog 2>/dev/null || true
+# Ensure dependencies
+pip3 install -q textual watchdog 2>/dev/null || true
 
 # State dir for IPC
 STATE_DIR="/tmp/uss-tenkara/_prifly"
