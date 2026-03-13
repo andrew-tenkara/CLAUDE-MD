@@ -2695,6 +2695,9 @@ class PriFlyCommander(App):
         directive_file.write_text(kickoff)
 
         mb_quote, mb_attr = get_mini_boss_quote()
+        # Escape single quotes for bash printf
+        mb_quote_esc = mb_quote.replace("'", "'\\''")
+        mb_attr_esc = mb_attr.replace("'", "'\\''")
 
         launch_script = state_dir / "launch-miniboss.sh"
         launch_script.write_text(
@@ -2702,8 +2705,8 @@ class PriFlyCommander(App):
             f"cd '{self._project_dir}'\n"
             "printf '\\n'\n"
             f"printf '\\033[38;5;204m\\033[1m     ★ ★ ★  USS TENKARA — MINI BOSS  ★ ★ ★\\033[0m\\n'\n"
-            f"printf '\\033[38;5;176m\\033[1m       \"{mb_quote}\"\\033[0m\\n'\n"
-            f"printf '\\033[38;5;242m                    — {mb_attr}\\033[0m\\n'\n"
+            f"printf '\\033[38;5;176m\\033[1m       \"{mb_quote_esc}\"\\033[0m\\n'\n"
+            f"printf '\\033[38;5;242m                    — {mb_attr_esc}\\033[0m\\n'\n"
             "printf '\\n'\n"
             "sleep 1\n"
             f"\n"
@@ -3520,11 +3523,24 @@ end tell
             self._add_radio("PRI-FLY", "Failed to look up PR", "error")
 
     def _extract_server_url(self, pilot) -> str:
-        """Extract a localhost URL from pilot's status_hint."""
+        """Extract a localhost URL from pilot's status_hint or managed-servers.json."""
         import re as _re
+        # Check status_hint first
         hint = pilot.status_hint or ""
         match = _re.search(r"(localhost:\d+|127\.0\.0\.1:\d+|0\.0\.0\.0:\d+)", hint)
-        return match.group(1) if match else ""
+        if match:
+            return match.group(1)
+        # Fallback: check managed-servers.json directly
+        try:
+            servers_file = Path(self._project_dir) / ".sortie" / "managed-servers.json"
+            if servers_file.exists():
+                entries = json.loads(servers_file.read_text(encoding="utf-8"))
+                for entry in entries:
+                    if entry.get("ticket_id") == pilot.ticket_id:
+                        return entry.get("url", "")
+        except (json.JSONDecodeError, OSError):
+            pass
+        return ""
 
     def _get_github_repo_url(self, cwd: str) -> str:
         """Derive GitHub repo URL from git remote."""
