@@ -929,7 +929,10 @@ class PriFlyHeader(Static):
         header.append("  │  ", style="grey50")
         header.append(datetime.now().strftime("%H:%M:%S LOCAL"), style="white")
 
-        # Context-sensitive hotkey bar — only show what the user can do RIGHT NOW
+        # ── HUD Action Bar ──────────────────────────────────────────
+        # Game design: group by intent, separate visually, color by state
+        # Row 1: Global — workspace | view | system
+        # Row 2: Pilot context — connection | dev tools | flight ops
         header.append("\n")
 
         # Get selected pilot context
@@ -940,63 +943,64 @@ class PriFlyHeader(Static):
         has_worktree = has_pilot and bool(pilot.worktree_path)
         has_server = has_pilot and bool(app._extract_server_url(pilot)) if has_pilot else False
 
-        # Always-visible keys (no pilot needed)
-        always_keys: list[tuple[str, str]] = [
-            ("T", "Terminal"), ("L", "Linear"), ("M", "Mini Boss"), ("F", "Flight"), ("Q", "Quit"),
-        ]
-
-        # Pilot-dependent keys — only show when relevant
-        pilot_keys: list[tuple[str, str, bool]] = []
-        if has_pilot:
-            # Pane management — D to open, or show it's open
-            if not has_pane:
-                pilot_keys.append(("D", "Open Pane", True))
+        def _key(k: str, label: str, active: bool = True) -> None:
+            if active:
+                header.append(f" [{k}]", style="bold cyan")
+                header.append(label, style="grey70")
             else:
-                pilot_keys.append(("D", "Pane ✓", False))
+                header.append(f" [{k}]", style="grey42")
+                header.append(label, style="grey42")
 
-            # Server — only after pane is open and has worktree
-            if has_pane and has_worktree:
-                pilot_keys.append(("V", "Start Server", True))
-                if has_server:
-                    pilot_keys.append(("O", "Open Browser", True))
+        def _sep() -> None:
+            header.append("  \u2502  ", style="grey30")
 
-            # PR — if worktree exists
-            if has_worktree:
-                pilot_keys.append(("P", "PR", True))
+        # ── Row 1: Global bar ──
+        # Workspace group
+        t_label = "Worktree" if (has_pilot and has_worktree) else "Terminal"
+        _key("T", t_label)
+        _key("L", "Linear")
+        _key("M", "Boss")
+        _sep()
+        # View group
+        _key("F", "Flight")
+        _sep()
+        # System group
+        _key("Q", "Quit")
 
-            # Status-dependent actions
-            if status in ("RECOVERED", "MAYDAY", "IDLE"):
-                pilot_keys.append(("R", "Resume", True))
-            if status == "AIRBORNE":
-                pilot_keys.append(("X", "Recall", True))
-                pilot_keys.append(("K", "Compact", True))
-            if status not in ("RECOVERED",):
-                pilot_keys.append(("W", "Wave-off", True))
-            if status in ("RECOVERED", "MAYDAY"):
-                pilot_keys.append(("Z", "Dismiss", True))
-
-        # Render always-visible keys
-        for i, (key, label) in enumerate(always_keys):
-            if i > 0:
-                header.append(" ", style="grey30")
-            header.append(f"[{key}]", style="bold cyan")
-            header.append(label, style="grey70")
-
-        # Render pilot-context keys on second row
-        if pilot_keys:
+        # ── Row 2: Pilot context bar (only when pilot selected) ──
+        if has_pilot:
             header.append("\n")
-            if has_pilot:
-                header.append(f"  {pilot.callsign}", style="bold yellow")
-                header.append(": ", style="grey50")
-            for i, (key, label, active) in enumerate(pilot_keys):
-                if i > 0:
-                    header.append(" ", style="grey30")
-                if active:
-                    header.append(f"[{key}]", style="bold cyan")
-                    header.append(label, style="grey70")
-                else:
-                    header.append(f"[{key}]", style="grey42")
-                    header.append(label, style="grey42")
+            # Pilot identity tag
+            status_style = STATUS_COLORS.get(status, "white")
+            header.append(f" {pilot.callsign}", style="bold yellow")
+            header.append(f" {status}", style=status_style)
+
+            _sep()
+
+            # Connection group — pane, server, browser, PR
+            if not has_pane:
+                _key("D", "Pane")
+            else:
+                _key("D", "Pane", False)
+            if has_pane and has_worktree:
+                _key("V", "Server")
+                if has_server:
+                    _key("O", "Browser")
+            if has_worktree:
+                _key("P", "PR")
+
+            _sep()
+
+            # Flight ops group — status-dependent actions
+            if status in ("RECOVERED", "MAYDAY", "IDLE"):
+                _key("R", "Resume")
+            if status == "AIRBORNE":
+                _key("X", "Recall")
+                _key("K", "Compact")
+            if status not in ("RECOVERED",):
+                _key("W", "Wave-off")
+            if status in ("RECOVERED", "MAYDAY"):
+                _key("Z", "Dismiss")
 
         return header
 
