@@ -36,6 +36,7 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 
 | Key | Action |
 |-----|--------|
+| `T` | Open terminal at project root |
 | `D` | Open agent pane (iTerm2 split) |
 | `V` | Spin up dev server for selected pilot |
 | `O` | Open pilot's localhost server in browser |

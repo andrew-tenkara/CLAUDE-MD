@@ -942,7 +942,7 @@ class PriFlyHeader(Static):
 
         # Always-visible keys (no pilot needed)
         always_keys: list[tuple[str, str]] = [
-            ("L", "Linear"), ("M", "Mini Boss"), ("F", "Flight"), ("Q", "Quit"),
+            ("T", "Terminal"), ("L", "Linear"), ("M", "Mini Boss"), ("F", "Flight"), ("Q", "Quit"),
         ]
 
         # Pilot-dependent keys — only show when relevant
@@ -1596,6 +1596,7 @@ class PriFlyCommander(App):
         Binding("k", "compact_selected", "Compact", priority=True),
         Binding("v", "start_server", "DevServer", priority=True),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True),
+        Binding("t", "open_terminal", "Terminal", priority=True),
         # Navigation
         Binding("escape", "focus_board", "Board"),
         Binding("tab", "toggle_focus", "Focus", show=False),
@@ -3513,6 +3514,11 @@ end tell
                 self._add_radio("PRI-FLY", "Opening Linear inbox", "system")
             except Exception:
                 self._add_radio("PRI-FLY", "Failed to open browser", "error")
+
+    def action_open_terminal(self) -> None:
+        """Open a plain terminal pane cd'd to the project root."""
+        self._iterm_pane_cmd("TERMINAL", f"cd '{self._project_dir}'")
+        self._add_radio("PRI-FLY", f"Terminal opened at {self._project_dir}", "system")
 
     def action_relaunch_miniboss(self) -> None:
         """Relaunch Mini Boss — clears state and re-spawns."""
