@@ -2295,31 +2295,23 @@ class PriFlyCommander(App):
         else:
             self._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
 
-    async def _cmd_wave_off(self, args: list[str]) -> None:
+    def _cmd_wave_off(self, args: list[str]) -> None:
         if not args:
             self._add_radio("PRI-FLY", "Usage: /wave-off <callsign>", "system")
             return
         callsign = args[0]
         try:
-            confirmed = await self.push_screen_wait(
-                ConfirmScreen(f"WAVE OFF {callsign}? This will kill the agent.")
-            )
-        except Exception:
-            self._add_radio("PRI-FLY", f"Wave-off cancelled — confirm dialog failed", "error")
-            return
-        if confirmed:
-            try:
-                # Kill managed dev servers for this pilot first
-                pilot = self._roster.get_by_callsign(callsign)
-                if pilot:
-                    self._kill_managed_servers(pilot.ticket_id, callsign)
+            # Kill managed dev servers for this pilot first
+            pilot = self._roster.get_by_callsign(callsign)
+            if pilot:
+                self._kill_managed_servers(pilot.ticket_id, callsign)
 
-                if self._agent_mgr.wave_off(callsign):
-                    self._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated", "error")
-                else:
-                    self._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
-            except Exception as e:
-                self._add_radio("PRI-FLY", f"Wave-off error: {e}", "error")
+            if self._agent_mgr.wave_off(callsign):
+                self._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated", "error")
+            else:
+                self._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
+        except Exception as e:
+            self._add_radio("PRI-FLY", f"Wave-off error: {e}", "error")
 
     def _kill_managed_servers(self, ticket_id: str, callsign: str) -> None:
         """Kill any managed dev servers for the given ticket and remove from registry."""
@@ -3561,14 +3553,14 @@ end tell
             return
         self._cmd_resume([pilot.callsign])
 
-    async def action_waveoff_selected(self) -> None:
+    def action_waveoff_selected(self) -> None:
         """Wave off (hard kill) the selected pilot."""
         try:
             pilot = self._get_selected_pilot()
             if not pilot:
                 self._add_radio("PRI-FLY", "No pilot selected", "error")
                 return
-            await self._cmd_wave_off([pilot.callsign])
+            self._cmd_wave_off([pilot.callsign])
         except Exception as e:
             self._add_radio("PRI-FLY", f"Wave-off failed: {e}", "error")
 
