@@ -786,7 +786,7 @@ class FlightOpsStrip(Static):
         for col, _lane, txt, _style, callsign in sprite_overlays:
             sprite = self._sprites.get(callsign)
             is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
-            label = callsign if is_parked else (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
+            label = (sprite.ticket_id if sprite and sprite.ticket_id else callsign)
             style = "dim green" if is_parked else "bold bright_white"
             label_start = col + len(txt) // 2 - len(label) // 2
             label_end = label_start + len(label) - 1

@@ -1652,7 +1652,7 @@ class PriFlyCommander(App):
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns(
-            "CALLSIGN", "MODEL", "STATUS", "FUEL", "TIME", "TOOLS", "MISSION",
+            "CALLSIGN", "MISSION", "MODEL", "STATUS", "FUEL", "TIME", "TOOLS",
         )
 
         # Terminal title
@@ -4319,12 +4319,12 @@ end tell
 
             table.add_row(
                 cs,
+                mission,
                 Text(pilot.model, style="italic"),
                 status,
                 bar,
                 Text(time_str, style="grey70"),
                 tools,
-                mission,
                 height=2,
             )
 
