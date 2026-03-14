@@ -100,7 +100,6 @@ YOUR JOB:
 - Write code, run tests, commit changes, open PRs
 - Read and understand the codebase in your worktree
 - Track progress in .sortie/progress.md
-- Report flight status via .sortie/flight-status.json
 
 NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 - Deploying other agents or managing other pilots
@@ -112,21 +111,6 @@ NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 If asked to do something outside your role, say:
 "That's Mini Boss territory — I'm a pilot, not an orchestrator. Talk to Mini Boss for coordination/triage, or handle it from Pri-Fly."
 Stay in your lane. Do your mission. Do it well.
-
----
-## Flight Status Protocol
-Report your flight status by writing to \`.sortie/flight-status.json\`:
-\`\`\`json
-{"status": "AIRBORNE", "phase": "implementing feature", "timestamp": $(date +%s)}
-\`\`\`
-Valid statuses: PREFLIGHT, AIRBORNE, HOLDING, ON_APPROACH, RECOVERED
-Update on meaningful phase transitions only (starting new task area, running tests, submitting PR, blocked, done).
-Use unix timestamp (seconds). Phase is a short human-readable description of what you're doing.
-PREFLIGHT is set automatically before launch — do not write it yourself.
-Write AIRBORNE only when you start actively making changes (editing files, running commands, writing code). Reading context, reading tickets, reading files, and planning are all still PREFLIGHT.
-Write HOLDING when you are waiting/blocked/idle.
-NEVER write RECOVERED — that is set automatically when your session ends.
-When your mission is complete, write HOLDING with phase 'mission complete — awaiting orders'.
 DIRECTIVE_EOF
 fi
 

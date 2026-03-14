@@ -1583,6 +1583,7 @@ class PriFlyCommander(App):
         self._observer: Optional[Observer] = None
         self._watched_jsonl_dirs: set[str] = set()  # JSONL dirs already watched
         self._rtk_active: bool = False
+        self._sentinel_pid: Optional[int] = None
 
         # Token delta tracking — detect when agents stop producing tokens
         self._prev_tokens: dict[str, int] = {}    # callsign -> last known token count
@@ -1679,6 +1680,10 @@ class PriFlyCommander(App):
         # Periodic legacy sync (catches agents started outside commander)
         # Runs I/O in background to keep the main thread free
         self.set_interval(5.0, self._sync_legacy_agents)
+
+        # Launch sentinel — headless JSONL classifier (Haiku) that writes
+        # sentinel-status.json to each worktree so agents don't self-report
+        self._start_sentinel()
 
         # Focus the board table
         self.query_one("#agent-table", DataTable).focus()
@@ -1821,6 +1826,23 @@ class PriFlyCommander(App):
 
             pilot.status_hint = agent.status_hint
 
+            # Sentinel status — Haiku-classified from JSONL events.
+            # Takes priority over legacy heuristics when present and fresh (<90s).
+            if pilot.worktree_path:
+                ss_path = Path(pilot.worktree_path) / ".sortie" / "sentinel-status.json"
+                try:
+                    ss = json.loads(ss_path.read_text(encoding="utf-8"))
+                    ss_age = int(time.time()) - ss.get("timestamp", 0)
+                    ss_status = ss.get("status", "").upper()
+                    if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED"):
+                        pilot.status = ss_status
+                        phase = ss.get("phase", "")
+                        if phase:
+                            pilot.flight_phase = phase
+                        self._stale_frames.pop(pilot.callsign, None)
+                except (OSError, json.JSONDecodeError, KeyError):
+                    pass  # No sentinel status yet — fall through to flight-status.json
+
             # Command file — Mini Boss or Air Boss can override agent status
             if pilot.worktree_path:
                 cmd_path = Path(pilot.worktree_path) / ".sortie" / "command.json"
@@ -1959,6 +1981,32 @@ class PriFlyCommander(App):
             self._observer.start()
         except Exception:
             self._observer = None
+
+    def _start_sentinel(self) -> None:
+        """Launch sentinel.py as a background subprocess tied to this TUI session.
+
+        sentinel.py spawns a persistent claude --input-format stream-json Haiku
+        subprocess and feeds it JSONL events from all managed worktrees. It writes
+        .sortie/sentinel-status.json to each worktree so pilots don't need to
+        self-report status.
+        """
+        sentinel_script = Path(__file__).parent / "sentinel.py"
+        if not sentinel_script.exists():
+            self._add_radio("PRI-FLY", "SENTINEL — script not found, skipping", "system")
+            return
+
+        try:
+            import subprocess
+            proc = subprocess.Popen(
+                [sys.executable, str(sentinel_script), "--project-dir", self._project_dir],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,   # isolated process group — not killed by TUI Ctrl-C
+            )
+            self._sentinel_pid = proc.pid
+            self._add_radio("PRI-FLY", f"SENTINEL — Haiku classifier online (PID {proc.pid})", "system")
+        except Exception as e:
+            self._add_radio("PRI-FLY", f"SENTINEL — failed to launch: {e}", "system")
 
     def _watch_agent_jsonl(self, worktree_path: str) -> None:
         """Register a watchdog on an agent's JSONL directory for immediate telemetry.
