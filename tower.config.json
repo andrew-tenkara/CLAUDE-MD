@@ -1,0 +1,12 @@
+{
+  "base_branch": "dev",
+  "package_manager": "pnpm",
+  "mcp_tools": {
+    "linear": true,
+    "github": true
+  },
+  "notifications": false,
+  "mini_boss_model": "opus",
+  "default_pilot_model": "sonnet",
+  "max_concurrent_agents": 3
+}
