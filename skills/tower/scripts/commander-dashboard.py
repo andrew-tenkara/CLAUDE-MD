@@ -1685,6 +1685,9 @@ class PriFlyCommander(App):
         # sentinel-status.json to each worktree so agents don't self-report
         self._start_sentinel()
 
+        # Watchdog: re-launch sentinel if it dies (runs every 15s inside _refresh_ui cycle)
+        self.set_interval(15.0, self._check_sentinel_health)
+
         # Focus the board table
         self.query_one("#agent-table", DataTable).focus()
 
@@ -2007,6 +2010,49 @@ class PriFlyCommander(App):
             self._add_radio("PRI-FLY", f"SENTINEL — Haiku classifier online (PID {proc.pid})", "system")
         except Exception as e:
             self._add_radio("PRI-FLY", f"SENTINEL — failed to launch: {e}", "system")
+
+    def _check_sentinel_health(self) -> None:
+        """Watchdog: verify sentinel process is alive; relaunch if dead.
+
+        Checks two ways:
+        1. os.kill(pid, 0) — process still exists
+        2. sentinel-heartbeat.json age < 60s — process is actually looping
+
+        If either fails, relaunches the sentinel and logs to radio.
+        """
+        import subprocess as _sp
+
+        dead = False
+        reason = ""
+
+        if self._sentinel_pid:
+            try:
+                os.kill(self._sentinel_pid, 0)
+            except ProcessLookupError:
+                dead = True
+                reason = f"PID {self._sentinel_pid} gone"
+            except PermissionError:
+                pass  # Process exists but we don't own it — treat as alive
+
+        # Also check heartbeat file age
+        hb_path = Path(self._project_dir) / ".sortie" / "sentinel-heartbeat.json"
+        try:
+            hb = json.loads(hb_path.read_text(encoding="utf-8"))
+            age = int(time.time()) - hb.get("ts", 0)
+            if age > 60:
+                dead = True
+                reason = f"heartbeat stale ({age}s)"
+            elif not hb.get("haiku_ok"):
+                # Sentinel alive but Haiku dead — sentinel will self-heal, just log
+                self._add_radio("SENTINEL", "Haiku sub-process restarting", "system")
+        except (OSError, json.JSONDecodeError, KeyError):
+            # No heartbeat yet (startup) — don't treat as dead until pid check fails
+            pass
+
+        if dead:
+            self._add_radio("SENTINEL", f"dead ({reason}) — relaunching", "system")
+            self._sentinel_pid = None
+            self._start_sentinel()
 
     def _watch_agent_jsonl(self, worktree_path: str) -> None:
         """Register a watchdog on an agent's JSONL directory for immediate telemetry.
@@ -2796,12 +2842,41 @@ class PriFlyCommander(App):
             "The Sentinel is a headless Haiku agent that watches JSONL event streams for all managed\n"
             "worktrees and classifies each agent's status automatically. Agents no longer self-report.\n"
             f"Sentinel script: {Path(__file__).parent / 'sentinel.py'}\n"
-            "To check sentinel health:\n"
-            f"  ps aux | grep sentinel     — check if it's running\n"
-            f"  cat <worktree>/.sortie/sentinel-status.json   — see last classification + timestamp\n"
-            "To restart the sentinel:\n"
-            f"  python3 {Path(__file__).parent / 'sentinel.py'} --project-dir {self._project_dir} &\n"
-            "If a worktree's sentinel-status.json is stale (>90s old), the TUI falls back to heuristic status.\n\n"
+            f"Heartbeat file:  {self._project_dir}/.sortie/sentinel-heartbeat.json\n\n"
+            "SENTINEL DIAGNOSTICS — run these to troubleshoot:\n"
+            "\n"
+            "1. Is sentinel alive?\n"
+            f"   cat {self._project_dir}/.sortie/sentinel-heartbeat.json\n"
+            "   Fields: pid, haiku_pid, haiku_ok, watching (list of tickets), ts (epoch).\n"
+            "   If ts is >60s old or file is missing, sentinel has crashed.\n"
+            "\n"
+            "2. Is Haiku sub-process alive?\n"
+            f"   cat {self._project_dir}/.sortie/sentinel-heartbeat.json | python3 -c \"import json,sys; d=json.load(sys.stdin); print('haiku_ok:', d['haiku_ok'], 'haiku_pid:', d.get('haiku_pid'))\"\n"
+            "   If haiku_ok is false, sentinel will auto-restart Haiku on next message.\n"
+            "   You can also force-restart sentinel (see below) to clear the state.\n"
+            "\n"
+            "3. Is sentinel classifying agents correctly?\n"
+            f"   cat <worktree>/.sortie/sentinel-status.json\n"
+            "   Fields: status, phase, timestamp, source='sentinel'.\n"
+            "   If timestamp is >90s old, the TUI has already stopped trusting it and fell back to heuristics.\n"
+            "\n"
+            "4. What JSONL events is the sentinel seeing? (tail an agent's session)\n"
+            "   # Find the encoded project path:\n"
+            f"   ls ~/.claude/projects/ | grep <worktree-name>\n"
+            "   # Tail the most recent session file:\n"
+            f"   tail -f ~/.claude/projects/<encoded-path>/*.jsonl\n"
+            "\n"
+            "5. Restart the sentinel:\n"
+            f"   # Kill existing:\n"
+            f"   kill $(cat {self._project_dir}/.sortie/sentinel-heartbeat.json | python3 -c \"import json,sys; print(json.load(sys.stdin)['pid'])\")\n"
+            f"   # Relaunch:\n"
+            f"   python3 {Path(__file__).parent / 'sentinel.py'} --project-dir {self._project_dir} &\n"
+            "\n"
+            "6. Force-classify a specific agent right now (writes a test IDLE event):\n"
+            "   You can write to sentinel-status.json directly as a one-off override:\n"
+            f"   echo '{{\"status\":\"AIRBORNE\",\"phase\":\"manual override\",\"timestamp\":{int(time.time())},\"source\":\"xo\"}}' > <worktree>/.sortie/sentinel-status.json\n"
+            "\n"
+            "If sentinel-status.json is stale (>90s old), the TUI falls back to heuristic status automatically.\n\n"
             "AGENT STATUS OVERRIDE:\n"
             "You can force-set any agent's status by writing a command file to their worktree:\n"
             "  <worktree>/.sortie/command.json\n"

@@ -41,6 +41,8 @@ IDLE_THRESHOLD   = 90     # Seconds of silence → send IDLE event to Haiku
 SYNC_INTERVAL    = 30     # Seconds between worktree rescans
 TAIL_EVENTS      = 15     # Max recent events to include in each Haiku message
 RESTART_AFTER    = 300    # Restart Haiku subprocess after N messages (context mgmt)
+HEARTBEAT_SECS   = 10     # How often to write sentinel-heartbeat.json
+HAIKU_PING_SECS  = 60     # How often to health-check the Haiku subprocess
 
 # ── Haiku system prompt ───────────────────────────────────────────────
 
@@ -269,6 +271,27 @@ class HaikuAgent:
             except (BrokenPipeError, OSError) as e:
                 log.warning("Haiku stdin write failed: %s", e)
 
+    @property
+    def haiku_pid(self) -> Optional[int]:
+        with self._lock:
+            return self._proc.pid if self._proc else None
+
+    @property
+    def is_alive(self) -> bool:
+        with self._lock:
+            return bool(self._proc and self._proc.poll() is None)
+
+    def health_check(self) -> bool:
+        """Verify Haiku subprocess is alive; restart if dead. Returns True if healthy."""
+        with self._lock:
+            alive = bool(self._proc and self._proc.poll() is None)
+        if not alive:
+            log.warning("Haiku health-check failed — restarting")
+            with self._lock:
+                self._start()
+            return False
+        return True
+
     def shutdown(self) -> None:
         with self._lock:
             if self._proc and self._proc.poll() is None:
@@ -444,6 +467,26 @@ class Sentinel:
         observer.start()
         return observer
 
+    # ── Heartbeat writer ──────────────────────────────────────────────
+
+    def _write_heartbeat(self) -> None:
+        """Write sentinel-heartbeat.json to project .sortie/ so Mini Boss and
+        the TUI can verify the sentinel is alive and see what it's watching."""
+        path = Path(self._project_dir) / ".sortie" / "sentinel-heartbeat.json"
+        with self._lock:
+            watching = list(self._watches.keys())
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                "pid":       os.getpid(),
+                "haiku_pid": self._haiku.haiku_pid,
+                "haiku_ok":  self._haiku.is_alive,
+                "watching":  watching,
+                "ts":        int(time.time()),
+            }))
+        except OSError:
+            pass
+
     # ── Main loop ─────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -451,10 +494,25 @@ class Sentinel:
         self.sync_worktrees()
         observer = self._start_watchdog()
 
+        last_heartbeat = 0.0
+        last_health_check = 0.0
+
         try:
             while True:
                 time.sleep(SYNC_INTERVAL)
+                now = time.monotonic()
+
                 self.sync_worktrees()
+
+                # Periodic Haiku health-check
+                if now - last_health_check >= HAIKU_PING_SECS:
+                    self._haiku.health_check()
+                    last_health_check = now
+
+                # Heartbeat (more frequent than sync — TUI checks this)
+                if now - last_heartbeat >= HEARTBEAT_SECS:
+                    self._write_heartbeat()
+                    last_heartbeat = now
 
                 # Send IDLE events for agents that have gone quiet
                 with self._lock:
@@ -470,6 +528,12 @@ class Sentinel:
         except KeyboardInterrupt:
             pass
         finally:
+            # Clear heartbeat so stale file isn't misread after restart
+            hb = Path(self._project_dir) / ".sortie" / "sentinel-heartbeat.json"
+            try:
+                hb.unlink(missing_ok=True)
+            except OSError:
+                pass
             observer.stop()
             observer.join()
             self._haiku.shutdown()
