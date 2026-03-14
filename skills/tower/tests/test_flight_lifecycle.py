@@ -12,6 +12,7 @@ Tests the full arc of agent behavior:
 Uses real JSONL fixtures from ENG-118 session alongside synthetic events.
 """
 import json
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -24,9 +25,7 @@ from classify import classify, AIRBORNE, ON_APPROACH, HOLDING
 # ── Real JSONL fixture loader ─────────────────────────────────────────
 
 _FIXTURE_PATH = Path(
-    "/Users/andrew/.claude/projects"
-    "/-Users-andrew-Projects-tenkara-platform--claude-worktrees-ENG-118"
-    "/96d21cce-3c7c-445f-a4a4-310dd46c33d6.jsonl"
+    os.environ.get("TENKARA_TEST_JSONL", "/nonexistent/placeholder.jsonl")
 )
 
 def _load_real_events() -> list[dict]:
