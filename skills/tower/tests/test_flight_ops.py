@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from flight_ops import FlightOpsStrip, FlightSprite, ZONE_PCT, PHASE_TICKS
+from flight_ops import FlightOpsStrip, FlightSprite, ZONE_PCT, PHASE_TICKS, _TOMBSTONE_TTL
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -234,7 +234,8 @@ class TestSpriteLifecycle(unittest.TestCase):
     def test_sprite_pruned_when_removed(self):
         strip = make_strip()
         strip.update_pilots([FakePilot("X-1", "AIRBORNE")])
-        strip.update_pilots([])
+        for _ in range(_TOMBSTONE_TTL):
+            strip.update_pilots([])
         self.assertNotIn("X-1", strip._sprites)
 
     def test_sprite_survives_same_status_update(self):
@@ -912,10 +913,10 @@ class TestExtremeDensity(unittest.TestCase):
         settle(strip)
         self.assertEqual(len(strip._sprites), 5)
 
-        # Remove 2
+        # Remove 2 — drain tombstone TTL via repeated update_pilots calls
         pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(3)]
-        strip.update_pilots(pilots)
-        advance(strip, 5)
+        for _ in range(_TOMBSTONE_TTL):
+            strip.update_pilots(pilots)
         self.assertEqual(len(strip._sprites), 3, "Removed pilots should be pruned")
 
         # Add 3 new

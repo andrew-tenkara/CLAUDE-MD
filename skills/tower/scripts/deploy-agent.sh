@@ -25,6 +25,7 @@ MODEL="sonnet"
 DIRECTIVE=""
 PROJECT_DIR=""
 BRANCH_OVERRIDE=""
+NO_LAUNCH=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --directive)   DIRECTIVE="$2"; shift 2 ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     --branch)      BRANCH_OVERRIDE="$2"; shift 2 ;;
+    --no-launch)   NO_LAUNCH=true; shift ;;
     -*)            echo "Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
@@ -173,6 +175,11 @@ echo "LAUNCH_SCRIPT:${LAUNCH_SCRIPT}"
 echo "READY: Run: bash '${LAUNCH_SCRIPT}'"
 
 # ── Launch in iTerm2 pane (Pit Boss window) ──────────────────────────
+if [ "$NO_LAUNCH" = true ]; then
+  echo "PREPPED:${TICKET_ID} (no-launch mode — deploy from TUI with D/R)"
+  exit 0
+fi
+
 STATE_DIR="/tmp/uss-tenkara/_prifly"
 AGENTS_WINDOW_FILE="${STATE_DIR}/agents_window_id"
 AGENTS_SESSION_FILE="${STATE_DIR}/agents_last_session_id"

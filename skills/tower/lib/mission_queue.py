@@ -20,6 +20,7 @@ class Mission:
     model: str             # "opus" | "sonnet" | "haiku"
     status: str            # QUEUED | DEPLOYING | ACTIVE | COMPLETE
     spec_content: str
+    branch_name: str = ""       # Linear gitBranchName or spec/<slug>
     created_at: float = 0.0
     started_at: float = 0.0
     completed_at: float = 0.0
@@ -235,6 +236,7 @@ class MissionQueue:
                 model=data.get("model", "sonnet"),
                 status="QUEUED",
                 spec_content=data.get("directive", ""),
+                branch_name=data.get("branch_name", ""),
                 created_at=data.get("created_at", time.time()),
             )
             self.add(mission)

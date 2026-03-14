@@ -61,6 +61,7 @@ STATUS_ICONS = {
     "RECOVERED": "✓",
     "MAYDAY": "⚠",
     "IDLE": "⏸",
+    "QUEUED": "◆",
     "AAR": "⛽",
     "SAR": "🚁",
 }
@@ -71,6 +72,7 @@ STATUS_COLORS = {
     "RECOVERED": "grey50",
     "MAYDAY": "bold red",
     "IDLE": "yellow",
+    "QUEUED": "bright_cyan",
     "AAR": "cyan",
     "SAR": "bold magenta",
 }
@@ -79,10 +81,11 @@ STATUS_SORT_ORDER = {
     "MAYDAY": 0,
     "AIRBORNE": 1,
     "IDLE": 2,
-    "AAR": 3,
-    "SAR": 4,
-    "ON_APPROACH": 5,
-    "RECOVERED": 6,
+    "QUEUED": 3,
+    "AAR": 4,
+    "SAR": 5,
+    "ON_APPROACH": 6,
+    "RECOVERED": 7,
 }
 
 # macOS sounds (built-in, no deps)
@@ -99,8 +102,13 @@ def _play_sound(sound_key: str) -> None:
     return
 
 
+_NOTIFICATIONS_ENABLED = False  # Disabled — too spammy during active sessions
+
+
 def _notify(title: str, message: str) -> None:
     """macOS notification via terminal-notifier or osascript fallback."""
+    if not _NOTIFICATIONS_ENABLED:
+        return
     icon = Path(__file__).resolve().parent.parent / "assets" / "uss-tenkara.png"
     try:
         cmd = ["terminal-notifier", "-title", title, "-message", message]
@@ -138,7 +146,7 @@ def _ctx_remaining(ctx: dict) -> int:
 
 
 _FLIGHT_STATUS_MAP = {
-    "PREFLIGHT": "IDLE",
+    "PREFLIGHT": "QUEUED",
     "AIRBORNE": "AIRBORNE",
     "HOLDING": "IDLE",
     "ON_APPROACH": "ON_APPROACH",
@@ -512,9 +520,16 @@ def _format_elapsed(seconds: float) -> str:
 class SplashScreen(ModalScreen):
     BINDINGS = [Binding("escape", "dismiss", "Skip")]
 
+    _CHECKS = [
+        ("INITIALIZING RADAR", 0.3),
+        ("COMMS CHECK", 0.5),
+        ("FLIGHT OPS", 0.7),
+    ]
+
     def __init__(self) -> None:
         super().__init__()
         self._dismissed = False
+        self._step = 0
 
     def compose(self) -> ComposeResult:
         splash_path = Path(__file__).resolve().parent.parent / "assets" / "splash.txt"
@@ -526,26 +541,59 @@ class SplashScreen(ModalScreen):
         content = Text()
         for line in art.split("\n"):
             content.append(line + "\n", style="bold green")
+        content.append("\n")
 
-        content.append("\n")
-        content.append("INITIALIZING RADAR . . .  ", style="bold white")
-        content.append("████████████", style="bold green")
-        content.append(" READY\n", style="bold bright_green")
-        content.append("COMMS CHECK . . . . . .   ", style="bold white")
-        content.append("████████████", style="bold green")
-        content.append(" READY\n", style="bold bright_green")
-        content.append("FLIGHT OPS . . . . . . .  ", style="bold white")
-        content.append("████████████", style="bold green")
-        content.append(" READY\n", style="bold bright_green")
-        content.append("\n")
-        content.append("ALL STATIONS MANNED AND READY\n", style="bold bright_white")
-        content.append("\n")
-        content.append("        Press any key to begin", style="dim")
+        yield Static(content, id="splash-art")
+        yield Static("", id="splash-status")
 
-        yield Static(content, id="splash-content")
+    def on_mount(self) -> None:
+        self._advance_check()
+
+    def _advance_check(self) -> None:
+        if self._dismissed:
+            return
+        widget = self.query_one("#splash-status", Static)
+
+        if self._step < len(self._CHECKS):
+            label, delay = self._CHECKS[self._step]
+            # Build all lines up to current step
+            t = Text()
+            for i in range(self._step):
+                prev_label, _ = self._CHECKS[i]
+                t.append(f"  {prev_label} {'.' * (22 - len(prev_label))} ", style="bold white")
+                t.append("████████████", style="bold green")
+                t.append(" READY\n", style="bold bright_green")
+            # Current line — animating
+            t.append(f"  {label} {'.' * (22 - len(label))} ", style="bold white")
+            t.append("████░░░░░░░░", style="bold yellow")
+            t.append(" . . .\n", style="bold yellow")
+            widget.update(t)
+            self._step += 1
+            self.set_timer(delay, self._advance_check)
+        else:
+            # All done
+            t = Text()
+            for label, _ in self._CHECKS:
+                t.append(f"  {label} {'.' * (22 - len(label))} ", style="bold white")
+                t.append("████████████", style="bold green")
+                t.append(" READY\n", style="bold bright_green")
+            t.append("\n")
+            t.append("  ALL STATIONS MANNED AND READY\n", style="bold bright_white")
+            t.append("  Press any key or wait . . .", style="dim")
+            widget.update(t)
+            # Auto-dismiss after a short beat
+            self.set_timer(0.8, self._auto_dismiss)
+
+    def _auto_dismiss(self) -> None:
+        if not self._dismissed:
+            self._dismissed = True
+            try:
+                self.dismiss()
+            except Exception:
+                pass
 
     def on_key(self, event) -> None:
-        event.stop()  # prevent hotkeys on the board below from firing
+        event.stop()
         if self._dismissed:
             return
         self._dismissed = True
@@ -556,12 +604,14 @@ class SplashScreen(ModalScreen):
 
     CSS = """
     SplashScreen { align: center middle; }
-    #splash-content {
+    #splash-art { width: auto; height: auto; }
+    #splash-status { width: auto; height: auto; min-height: 6; }
+    SplashScreen > Vertical, SplashScreen > Static {
         width: auto; height: auto;
-        padding: 2 4;
+        padding: 0 4;
         background: $surface-darken-3;
-        border: thick green;
     }
+    SplashScreen { background: $surface-darken-3 80%; }
     """
 
 
@@ -1697,7 +1747,7 @@ class PriFlyCommander(App):
         # Show splash — auto-dismisses when initial sync completes or after 3s
         self._splash: Optional[SplashScreen] = SplashScreen()
         self.push_screen(self._splash)
-        self.set_timer(3.0, self._dismiss_splash)
+        self.set_timer(2.5, self._dismiss_splash)
 
     def on_unmount(self) -> None:
         self._agent_mgr.shutdown()
@@ -1798,6 +1848,7 @@ class PriFlyCommander(App):
             # Truly unknown agents (no directive at all) — always RECOVERED
             if pilot.mission_title in ("Unknown", "unknown") and pilot.ticket_id in ("Unknown", "unknown"):
                 pilot.status = "RECOVERED"
+                pilot.mood = derive_mood(pilot)
                 continue
 
             # Token delta tracking (_check_token_deltas) is the authority for
@@ -1835,10 +1886,17 @@ class PriFlyCommander(App):
                 ss_path = Path(pilot.worktree_path) / ".sortie" / "sentinel-status.json"
                 try:
                     ss = json.loads(ss_path.read_text(encoding="utf-8"))
-                    ss_age = int(time.time()) - ss.get("timestamp", 0)
+                    ss_age = int(time_mod.time()) - ss.get("timestamp", 0)
                     ss_status = ss.get("status", "").upper()
                     if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED"):
-                        pilot.status = ss_status
+                        # Never let sentinel downgrade RECOVERED → something else
+                        if pilot.status == "RECOVERED" and ss_status != "RECOVERED":
+                            pass  # keep RECOVERED
+                        else:
+                            # Map sentinel status through flight-status map
+                            # (HOLDING → IDLE, others pass through)
+                            mapped = _FLIGHT_STATUS_MAP.get(ss_status, ss_status)
+                            pilot.status = mapped if mapped else ss_status
                         phase = ss.get("phase", "")
                         if phase:
                             pilot.flight_phase = phase
@@ -1876,6 +1934,7 @@ class PriFlyCommander(App):
                 self._add_radio(pilot.callsign, "RECOVERED — session ended", "success")
                 _play_sound("recovered")
                 _notify("USS TENKARA — RECOVERED", f"{pilot.callsign} on deck")
+                pilot.mood = derive_mood(pilot)
                 continue
 
             # Store agent-reported flight status on pilot (if fresh)
@@ -2038,7 +2097,7 @@ class PriFlyCommander(App):
         hb_path = Path(self._project_dir) / ".sortie" / "sentinel-heartbeat.json"
         try:
             hb = json.loads(hb_path.read_text(encoding="utf-8"))
-            age = int(time.time()) - hb.get("ts", 0)
+            age = int(time_mod.time()) - hb.get("ts", 0)
             if age > 60:
                 dead = True
                 reason = f"heartbeat stale ({age}s)"
@@ -2656,10 +2715,15 @@ class PriFlyCommander(App):
 
         worktree_path = None
 
-        # Check legacy state first
-        legacy_agent = self._legacy_agents.get(tid)
-        if legacy_agent and legacy_agent.worktree_path and Path(legacy_agent.worktree_path).exists():
-            worktree_path = legacy_agent.worktree_path
+        # Check pilot's own worktree first (e.g., from /tq prep)
+        if pilot.worktree_path and Path(pilot.worktree_path).exists():
+            worktree_path = pilot.worktree_path
+
+        # Check legacy state
+        if not worktree_path:
+            legacy_agent = self._legacy_agents.get(tid)
+            if legacy_agent and legacy_agent.worktree_path and Path(legacy_agent.worktree_path).exists():
+                worktree_path = legacy_agent.worktree_path
 
         # Otherwise try create-worktree.sh with --resume
         if not worktree_path and worktree_script.exists():
@@ -2874,7 +2938,7 @@ class PriFlyCommander(App):
             "\n"
             "6. Force-classify a specific agent right now (writes a test IDLE event):\n"
             "   You can write to sentinel-status.json directly as a one-off override:\n"
-            f"   echo '{{\"status\":\"AIRBORNE\",\"phase\":\"manual override\",\"timestamp\":{int(time.time())},\"source\":\"xo\"}}' > <worktree>/.sortie/sentinel-status.json\n"
+            f"   echo '{{\"status\":\"AIRBORNE\",\"phase\":\"manual override\",\"timestamp\":{int(time_mod.time())},\"source\":\"xo\"}}' > <worktree>/.sortie/sentinel-status.json\n"
             "\n"
             "If sentinel-status.json is stale (>90s old), the TUI falls back to heuristic status automatically.\n\n"
             "AGENT STATUS OVERRIDE:\n"
@@ -2896,13 +2960,30 @@ class PriFlyCommander(App):
             "4. Track the server in managed-servers.json (see MANAGED SERVERS above)\n"
             "5. Use a trap to clean up on exit:\n"
             "   trap to remove the entry from managed-servers.json when the server stops\n\n"
+            "TOWER QUEUE (/tq):\n"
+            "The Air Boss preps sorties via /tq <ticket> from any Claude session. This creates the "
+            "worktree and puts the pilot on deck as IDLE. The Air Boss then hits D or R in the TUI "
+            "to deploy. When you see a new worktree appear that you didn't deploy, it came from /tq.\n"
+            "Your role: check the directive, assess the model, update .sortie/model.txt if needed.\n\n"
+            "IMPORTANT — REINFORCE /tq CONSTANTLY:\n"
+            "In EVERY sitrep, suggestion, and conversation, mention /tq. This is THE way to get "
+            "pilots on deck. Build muscle memory through repetition. Examples:\n"
+            "  After sitrep:    '5 in backlog. /tq ENG-205 to get one on deck.'\n"
+            "  After recovery:  'Phoenix-1 recovered. Follow-up is ENG-215 — /tq ENG-215 when ready.'\n"
+            "  Ticket advice:   'ENG-208 looks like sonnet. /tq ENG-208 to prep it.'\n"
+            "  Batch:           '/tq ENG-220, ENG-221, ENG-222 to prep all three.'\n"
+            "  No args:         '/tq with no args to batch-prep all unstarted tickets.'\n"
+            "  Spec file:       '/tq ~/specs/auth.md to prep from a spec.'\n"
+            "  Free text:       '/tq fix the date formatter in utils/date.ts'\n"
+            "Say it every time. Every single time.\n\n"
             "STARTUP ORDERS:\n"
             "1. Currently open worktrees — what's in progress, anything stale?\n"
             "2. Use the mcp__linear__list_issues tool to fetch Todo/In Progress "
             "tasks assigned to me.\n"
             f"3. Write each ticket as a mission file to {self._project_dir}/.sortie/mission-queue/ "
             "(mkdir -p first). This populates the dashboard's mission queue.\n"
-            "4. Give a brief sitrep — 5-10 lines max."
+            "4. Give a brief sitrep — 5-10 lines max. End with a /tq suggestion: "
+            "'/tq <ticket> to get the next one on deck.'"
         )
 
         # Write directive + launch script (same pattern as _open_agent_pane)
@@ -2942,6 +3023,7 @@ class PriFlyCommander(App):
             f"# Register our own iTerm session so deploy-agent.sh splits from this pane\n"
             f"if [ -n \"$ITERM_SESSION_ID\" ] && [ -f /tmp/uss-tenkara/_prifly/agents_window_id ]; then\n"
             f"  echo \"$ITERM_SESSION_ID\" > /tmp/uss-tenkara/_prifly/agents_last_session_id\n"
+            f"  echo \"$ITERM_SESSION_ID\" > /tmp/uss-tenkara/_prifly/miniboss-iterm-session\n"
             f"fi\n"
             f"\n"
             f"claude --model opus "
@@ -3284,12 +3366,50 @@ class PriFlyCommander(App):
     def _open_agent_pane(self, pilot: "Pilot") -> None:
         """Open an interactive Claude CLI session in an iTerm2 pane.
 
-        Creates a git worktree, writes .sortie/ protocol files (directive.md,
-        launch.sh), then runs `claude --model X '<kickoff>' --disallowedTools ...`
-        in the Pit Boss window — exactly like /sortie.
+        If the worktree is already prepped (e.g., from /tq or deploy-agent.sh),
+        just run the existing launch.sh. Otherwise creates a git worktree,
+        writes .sortie/ protocol files, and launches claude.
         """
         if pilot.callsign in self._iterm_panes:
             return
+
+        # ── Fast path: worktree already prepped (from /tq) ───────────
+        if pilot.worktree_path:
+            launch_script = Path(pilot.worktree_path) / ".sortie" / "launch.sh"
+            if launch_script.exists():
+                # Clear stale session-ended from previous run
+                session_ended = Path(pilot.worktree_path) / ".sortie" / "session-ended"
+                if session_ended.exists():
+                    session_ended.unlink()
+                # Build Top Gun splash for the iTerm pane
+                p_quote, p_attr = get_pilot_launch_quote()
+                p_quote = p_quote.replace("'", "'\\''")
+                p_attr = p_attr.replace("'", "'\\''")
+                splash_script = Path(pilot.worktree_path) / ".sortie" / "splash.sh"
+                splash_script.write_text(
+                    "#!/usr/bin/env bash\n"
+                    "printf '\\n'\n"
+                    "printf '\\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\033[0m\\n'\n"
+                    "printf '\\033[1;31m        ╔══╗  ╔══╗  ╔══╗  ╔══╗  ╔══╗  ╔══╗  ╔══╗        \\033[0m\\n'\n"
+                    "printf '\\033[1;37m           ★ USS TENKARA — FLIGHT OPS ★                   \\033[0m\\n'\n"
+                    f"printf '\\033[1;36m        CALLSIGN: {pilot.callsign}\\033[0m\\n'\n"
+                    f"printf '\\033[1;35m        SQUADRON: {pilot.squadron}\\033[0m\\n'\n"
+                    f"printf '\\033[1;33m        MODEL:    {pilot.model.upper()}\\033[0m\\n'\n"
+                    f"printf '\\033[2;37m        TRAIT:    {pilot.trait}\\033[0m\\n'\n"
+                    "printf '\\033[1;31m        ╚══╝  ╚══╝  ╚══╝  ╚══╝  ╚══╝  ╚══╝  ╚══╝        \\033[0m\\n'\n"
+                    "printf '\\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\033[0m\\n'\n"
+                    f"printf '\\033[1;37m  \"{p_quote}\"\\033[0m\\n'\n"
+                    f"printf '\\033[2;37m                          — {p_attr}\\033[0m\\n'\n"
+                    "printf '\\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\033[0m\\n'\n"
+                    "printf '\\n'\n"
+                    "sleep 1\n"
+                )
+                splash_script.chmod(0o755)
+                cmd = f"bash '{splash_script}' && bash '{launch_script}'"
+                self._iterm_pane_cmd(pilot.callsign, cmd)
+                self._watch_agent_jsonl(pilot.worktree_path)
+                self._add_radio(pilot.callsign, "Launching from prepped worktree", "success")
+                return
 
         scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
         sortie_scripts = Path.home() / ".claude" / "skills" / "sortie" / "scripts"
@@ -3713,8 +3833,8 @@ end tell
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
-        if pilot.status not in ("RECOVERED", "MAYDAY"):
-            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — only RECOVERED/MAYDAY can be dismissed", "error")
+        if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE"):
+            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — only RECOVERED/MAYDAY/IDLE can be dismissed", "error")
             return
         callsign = pilot.callsign
         tid = pilot.ticket_id
@@ -3776,6 +3896,7 @@ end tell
         # Clear state so _spawn_airboss guard passes
         self._airboss_spawned = False
         self._airboss_active = False
+        self._iterm_panes.discard("MINI-BOSS")
         # Remove stale status file
         try:
             Path("/tmp/uss-tenkara/_prifly/miniboss-status").unlink(missing_ok=True)
@@ -3893,7 +4014,7 @@ end tell
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
-        if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE"):
+        if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE", "QUEUED"):
             self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — can't resume", "error")
             return
         self._cmd_resume([pilot.callsign])

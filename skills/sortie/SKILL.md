@@ -44,6 +44,12 @@ If it exits non-zero, tell the user what's missing and stop.
 
 ---
 
+## Tower Integration
+
+If Tower is running, use **`/tq`** (tower-queue) instead — it preps worktrees and puts pilots on deck for TUI deployment. `/sortie` is for standalone interactive use without Tower.
+
+---
+
 ## Entry Points
 
 ### 1. `/sortie` — Full Queue (Interactive)
