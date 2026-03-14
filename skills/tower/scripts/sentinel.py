@@ -494,36 +494,45 @@ class Sentinel:
         self.sync_worktrees()
         observer = self._start_watchdog()
 
-        last_heartbeat = 0.0
+        last_heartbeat   = 0.0
         last_health_check = 0.0
+        last_sync        = 0.0
+        last_idle_check  = 0.0
 
+        # Tight inner loop (HEARTBEAT_SECS) drives all periodic work.
+        # Each task only fires when its own interval has elapsed — the loop
+        # itself is cheap (just a sleep + monotonic comparisons).
         try:
             while True:
-                time.sleep(SYNC_INTERVAL)
+                time.sleep(HEARTBEAT_SECS)
                 now = time.monotonic()
 
-                self.sync_worktrees()
+                # Heartbeat — every HEARTBEAT_SECS (10s)
+                self._write_heartbeat()
+                last_heartbeat = now
 
-                # Periodic Haiku health-check
+                # Haiku health-check — every HAIKU_PING_SECS (60s)
                 if now - last_health_check >= HAIKU_PING_SECS:
                     self._haiku.health_check()
                     last_health_check = now
 
-                # Heartbeat (more frequent than sync — TUI checks this)
-                if now - last_heartbeat >= HEARTBEAT_SECS:
-                    self._write_heartbeat()
-                    last_heartbeat = now
+                # Worktree rescan — every SYNC_INTERVAL (30s)
+                if now - last_sync >= SYNC_INTERVAL:
+                    self.sync_worktrees()
+                    last_sync = now
 
-                # Send IDLE events for agents that have gone quiet
-                with self._lock:
-                    watches = list(self._watches.values())
-                for ws in watches:
-                    if ws.pending_timer:
-                        continue  # already scheduled
-                    idle_secs = int(time.monotonic() - ws.last_event_mono)
-                    if idle_secs >= IDLE_THRESHOLD and not ws.idle_notified:
-                        ws.idle_notified = True
-                        self._haiku.send(ws.ticket_id, [f"IDLE {idle_secs}s"])
+                # IDLE event check — every HEARTBEAT_SECS (keeps idle detection snappy)
+                if now - last_idle_check >= HEARTBEAT_SECS:
+                    with self._lock:
+                        watches = list(self._watches.values())
+                    for ws in watches:
+                        if ws.pending_timer:
+                            continue
+                        idle_secs = int(time.monotonic() - ws.last_event_mono)
+                        if idle_secs >= IDLE_THRESHOLD and not ws.idle_notified:
+                            ws.idle_notified = True
+                            self._haiku.send(ws.ticket_id, [f"IDLE {idle_secs}s"])
+                    last_idle_check = now
 
         except KeyboardInterrupt:
             pass
