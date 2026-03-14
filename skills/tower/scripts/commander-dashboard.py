@@ -1889,6 +1889,14 @@ class PriFlyCommander(App):
                         p.status = "RECOVERED"
                 del self._legacy_agents[tid]
 
+        # Push roster changes to the flight strip immediately — don't wait
+        # for the next _refresh_ui cycle (up to 3s away).
+        try:
+            strip = self.query_one("#flight-strip", FlightOpsStrip)
+            strip.update_pilots(self._roster.all_pilots())
+        except Exception:
+            pass
+
     def _sync_managed_servers(self) -> None:
         """Read .sortie/managed-servers.json and map server URLs to pilots."""
         servers_file = Path(self._project_dir) / ".sortie" / "managed-servers.json"

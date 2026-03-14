@@ -121,6 +121,8 @@ class FlightSprite:
     # SAR-specific state
     helo_col: int = 0
     parachute_col: int = 0
+    # Soft-prune: ticks since removed from roster (lets animations play out)
+    tombstone_ticks: int = 0
 
 
 # ── Widget ────────────────────────────────────────────────────────────
@@ -316,9 +318,23 @@ class FlightOpsStrip(Static):
                 sprite.phase = new_phase
                 sprite.prev_status = status
 
-        # Prune gone pilots
+        # Soft-prune: keep sprites animating briefly after leaving roster so
+        # landing/death animations play out before the sprite disappears.
+        # Game-dev pattern: tombstone state with TTL.
+        _TOMBSTONE_TTL = 30  # ticks (~4.5 s at 0.15 s/tick)
+        to_prune = []
         for pid in set(self._sprites) - seen:
+            sprite = self._sprites[pid]
+            sprite.tombstone_ticks += 1
+            # Hard-remove once fully parked, in MAYDAY, or TTL expired
+            if sprite.tombstone_ticks >= _TOMBSTONE_TTL or sprite.phase in ("DECK_PARK", "MAYDAY"):
+                to_prune.append(pid)
+        for pid in to_prune:
             del self._sprites[pid]
+
+        # Deconflict lanes immediately so new sprites are placed correctly
+        # before the next animation tick fires.
+        self._deconflict_lanes()
 
     # ── State machine ─────────────────────────────────────────────────
 
@@ -567,8 +583,23 @@ class FlightOpsStrip(Static):
             # ── Column clamp ─────────────────────────────────────────
             sprite.col = max(0, min(sw - 8, sprite.col))
 
-        # Lane deconfliction — use both lanes to prevent crowding
-        # Step 1: Parked sprites alternate lanes (even index=0, odd index=1)
+        self._deconflict_lanes()
+
+    def _deconflict_lanes(self) -> None:
+        """Assign sprite lanes to prevent visual overlap.
+
+        Uses an O(n) left-to-right occupancy sweep — a simplified version of
+        the OAM slot-table pattern from arcade hardware. Each lane tracks its
+        rightmost occupied column; sprites are assigned the first free lane.
+        When both lanes are blocked a sprite is nudged right to the lane that
+        opens soonest, keeping it visible rather than stacking silently.
+
+        Called from both _advance_sprites (every tick) and update_pilots (on
+        roster change) so new agents are correctly placed immediately.
+        """
+        CLEARANCE = 7   # min column gap between adjacent sprites in a lane
+
+        # ── Deck sprites: stable index-based lane alternation ─────────
         parked = sorted(
             [s for s in self._sprites.values() if s.phase in ("DECK_PARK", "TAXI_BACK")],
             key=lambda s: s.col,
@@ -576,35 +607,50 @@ class FlightOpsStrip(Static):
         for idx, s in enumerate(parked):
             s.lane = idx % 2
 
-        # Step 2: Idle sprites alternate lanes, opposite parity from parked
         idle = sorted(
             [s for s in self._sprites.values() if s.phase == "DECK_IDLE"],
             key=lambda s: s.col,
         )
-        idle_start_lane = (len(parked)) % 2  # continue alternation
+        idle_start = len(parked) % 2
         for idx, s in enumerate(idle):
-            s.lane = (idle_start_lane + idx) % 2
+            s.lane = (idle_start + idx) % 2
 
-        # Step 3: Active sprites (flying) — default to lane 0, bump overlaps to lane 1
-        active = sorted(
-            [s for s in self._sprites.values()
-             if s.phase not in ("DECK_PARK", "TAXI_BACK", "DECK_IDLE", "ELEVATOR")],
-            key=lambda s: s.col,
-        )
-        for s in active:
-            s.lane = 0
-        for i in range(len(active)):
-            for j in range(i + 1, len(active)):
-                if abs(active[i].col - active[j].col) < 8:
-                    if active[j].lane == 0:
-                        active[j].lane = 1
-                    else:
-                        active[j].col = active[i].col + 8
-
-        # Step 4: Elevator sprites — lane 0
         for s in self._sprites.values():
             if s.phase == "ELEVATOR":
                 s.lane = 0
+
+        # ── Active (airborne) sprites: occupancy-grid lane assignment ──
+        DECK_PHASES = {"DECK_PARK", "TAXI_BACK", "DECK_IDLE", "ELEVATOR"}
+        active = sorted(
+            [s for s in self._sprites.values() if s.phase not in DECK_PHASES],
+            key=lambda s: s.col,
+        )
+
+        # lane_end[lane] = first column available in that lane
+        lane_end: dict[int, int] = {0: 0, 1: 0}
+        sw = self._strip_width
+
+        for s in active:
+            w = max(4, len(self._get_sprite_text(s)))
+            can0 = s.col >= lane_end[0]
+            can1 = s.col >= lane_end[1]
+
+            if can0:
+                s.lane = 0
+                lane_end[0] = s.col + w + CLEARANCE
+            elif can1:
+                s.lane = 1
+                lane_end[1] = s.col + w + CLEARANCE
+            else:
+                # Both lanes blocked — nudge to the lane that opens soonest
+                if lane_end[0] <= lane_end[1]:
+                    s.lane = 0
+                    s.col = min(lane_end[0], sw - w)
+                    lane_end[0] = s.col + w + CLEARANCE
+                else:
+                    s.lane = 1
+                    s.col = min(lane_end[1], sw - w)
+                    lane_end[1] = s.col + w + CLEARANCE
 
     # ── Sprite text / style helpers ───────────────────────────────────
 
@@ -805,12 +851,34 @@ class FlightOpsStrip(Static):
                     placed = True
                     break
             if not placed:
-                # All rows full — overwrite last row (best effort)
-                for i, ch in enumerate(label):
-                    pos = label_start + i
-                    if 0 <= pos < sw:
-                        label_rows_cells[MAX_LABEL_ROWS - 1].append((pos, ch, style))
-                        label_rows_chars[MAX_LABEL_ROWS - 1][pos] = ch
+                # All rows full — find a gap in the last row and truncate to fit
+                r = MAX_LABEL_ROWS - 1
+                # Find first unoccupied run of columns wide enough for at least "…"
+                occ = occupied[r]
+                gaps = []
+                check = label_start
+                # Scan from label_start rightward for the first free column
+                while check < sw:
+                    blocked = any(s <= check <= e for s, e in occ)
+                    if not blocked:
+                        gaps.append(check)
+                        break
+                    check += 1
+                if gaps:
+                    gstart = gaps[0]
+                    # Find how many chars fit before the next occupied block
+                    free = sw
+                    for s, e in occ:
+                        if s > gstart:
+                            free = min(free, s - gstart)
+                    trunc = label[:max(0, free - 1)] + "…" if len(label) > free else label
+                    trunc = trunc[:free]
+                    for i, ch in enumerate(trunc):
+                        p = gstart + i
+                        if 0 <= p < sw:
+                            label_rows_cells[r].append((p, ch, style))
+                            label_rows_chars[r][p] = ch
+                    occupied[r].append((gstart, gstart + len(trunc) - 1))
 
         # Keep row_label for backwards compat (first row)
         row_label = label_rows_chars[0]
@@ -916,6 +984,9 @@ class FlightOpsStrip(Static):
 
         pos = 0
         for start, end, txt, style in overlays:
+            # Skip sprites already overrun by a prior wider/overlapping sprite
+            if start < pos:
+                continue
             # Background before sprite
             while pos < start and pos < sw:
                 ch = bg[pos] if pos < len(bg) else " "
