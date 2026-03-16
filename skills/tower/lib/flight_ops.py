@@ -112,6 +112,10 @@ PHASE_TICKS = {
 # Ticks for the radar sweep to cross the full strip width once (~3 s)
 RADAR_SWEEP_TICKS = 20
 
+# Tombstone TTL — ticks after a sprite leaves the roster before hard-removal.
+# Allows landing/death animations to play out before the sprite disappears.
+_TOMBSTONE_TTL = 30  # ticks (~4.5 s at 0.15 s/tick)
+
 
 # ── Dataclass ─────────────────────────────────────────────────────────
 
@@ -366,7 +370,6 @@ class FlightOpsStrip(Static):
         # Soft-prune: keep sprites animating briefly after leaving roster so
         # landing/death animations play out before the sprite disappears.
         # Game-dev pattern: tombstone state with TTL.
-        _TOMBSTONE_TTL = 30  # ticks (~4.5 s at 0.15 s/tick)
         to_prune = []
         for pid in set(self._sprites) - seen:
             sprite = self._sprites[pid]

@@ -98,6 +98,29 @@ class WatchState:
 
 # ── Sentinel daemon ───────────────────────────────────────────────────
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON to a file atomically via tempfile + os.rename().
+
+    Prevents torn reads when the TUI reads sentinel-status.json mid-write.
+    """
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            os.write(fd, json.dumps(data).encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.rename(tmp, str(path))
+    except OSError:
+        # Fallback: if rename fails (e.g., cross-device), try direct write
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        path.write_text(json.dumps(data))
+
+
 class Sentinel:
     def __init__(self, project_dir: str) -> None:
         self._project_dir = project_dir
@@ -109,10 +132,9 @@ class Sentinel:
     def _write_status(self, worktree_path: str, status: dict) -> None:
         path = Path(worktree_path) / ".sortie" / "sentinel-status.json"
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
             status["timestamp"] = int(time.time())
             status["source"] = "sentinel"
-            path.write_text(json.dumps(status))
+            _atomic_write_json(path, status)
         except OSError as e:
             log.warning("write_status failed for %s: %s", worktree_path, e)
 
@@ -325,12 +347,11 @@ class Sentinel:
         with self._lock:
             watching = list(self._watches.keys())
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({
+            _atomic_write_json(path, {
                 "pid":      os.getpid(),
                 "watching": watching,
                 "ts":       int(time.time()),
-            }))
+            })
         except OSError:
             pass
 
