@@ -229,9 +229,8 @@ class Monitoring:
             if age > 60:
                 dead = True
                 reason = f"heartbeat stale ({age}s)"
-            elif not hb.get("haiku_ok"):
-                # Sentinel alive but Haiku dead — sentinel will self-heal, just log
-                ctx._add_radio("SENTINEL", "Haiku sub-process restarting", "system")
+            # Note: sentinel is now purely deterministic (no Haiku LLM sub-process).
+            # haiku_ok field is no longer written to heartbeat — don't check for it.
         except (OSError, json.JSONDecodeError, KeyError):
             # No heartbeat yet (startup) — don't treat as dead until pid check fails
             pass

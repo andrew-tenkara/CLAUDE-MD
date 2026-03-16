@@ -208,10 +208,9 @@ d = json.load(open('$hb'))
 age = int(time.time()) - d.get('ts', 0)
 pid = d.get('pid', '?')
 watching = d.get('watching', [])
-haiku_ok = d.get('haiku_ok', False)
 status = '● ALIVE' if age < 60 else '✗ STALE'
 print(f'  {status}  PID:{pid}  age:{age}s  watching:{len(watching)} agents')
-print(f'  Haiku: {\"● OK\" if haiku_ok else \"✗ DOWN\"}')
+print(f'  Classifier: deterministic (rule-based)')
 for w in watching:
     print(f'    └─ {w}')
 " 2>/dev/null
@@ -460,7 +459,7 @@ import json, time
 d = json.load(open('$hb'))
 age = int(time.time()) - d.get('ts', 0)
 pid = d.get('pid', '?')
-haiku_ok = d.get('haiku_ok', False)
+watching = len(d.get('watching', []))
 alive = age < 60
 # Check if PID actually exists
 import os
@@ -470,15 +469,12 @@ try:
 except:
     pid_alive = False
 if alive and pid_alive:
-    print(f'  ● SENTINEL: alive (PID {pid}, heartbeat {age}s ago)')
+    print(f'  ● SENTINEL: alive (PID {pid}, heartbeat {age}s ago, watching {watching} agents)')
 elif pid_alive:
     print(f'  ⚠ SENTINEL: PID {pid} exists but heartbeat stale ({age}s)')
 else:
     print(f'  ✗ SENTINEL: dead (PID {pid} gone, heartbeat {age}s ago)')
-if haiku_ok:
-    print(f'  ● HAIKU: online')
-else:
-    print(f'  ✗ HAIKU: offline (sentinel will auto-restart)')
+print(f'  Classifier: deterministic (rule-based, no LLM)')
 " 2>/dev/null
     else
         echo "  ✗ SENTINEL: no heartbeat file — not running"
