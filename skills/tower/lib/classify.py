@@ -21,6 +21,7 @@ AIRBORNE    = "AIRBORNE"
 ON_APPROACH = "ON_APPROACH"
 HOLDING     = "HOLDING"
 RECOVERED   = "RECOVERED"
+PREFLIGHT   = "PREFLIGHT"
 
 _PRIORITY = {HOLDING: 0, ON_APPROACH: 1, AIRBORNE: 2}
 
@@ -262,4 +263,118 @@ def classify(events: list[dict]) -> tuple[str, str]:
     elif error_count >= 2 and best_status == AIRBORNE:
         best_phase = f"{best_phase} ({error_count} errors)"
 
+    # PREFLIGHT: if best_status is HOLDING, window has zero AIRBORNE or
+    # ON_APPROACH events, AND there was at least one actual HOLDING action
+    # (read/git-info), the agent is reading before its first write → PREFLIGHT.
+    # Empty/noise-only windows stay HOLDING (idle).
+    if (best_status == HOLDING
+            and last[HOLDING] > -1
+            and last[AIRBORNE] == -1
+            and last[ON_APPROACH] == -1):
+        best_status = PREFLIGHT
+
     return best_status, best_phase
+
+
+# ── Event compression for Haiku gate ────────────────────────────────
+
+def _categorize_tool(name: str, inp: dict) -> tuple[str, str]:
+    """Categorize a tool_use block → (action, target) for compression.
+
+    Reuses the existing tool sets and bash regexes to produce a concise
+    (action, target) pair suitable for the Haiku gate's compressed summary.
+    """
+    if name in _WRITE_TOOLS:
+        fp = inp.get("file_path") or inp.get("notebook_path", "")
+        return "write", Path(fp).name if fp else name.lower()
+
+    if name == "Bash":
+        cmd = (inp.get("command") or "").strip()
+        c = cmd.lower()
+        if _RE_TEST.search(c):
+            return "test", cmd[:50]
+        if _RE_BUILD.search(c):
+            return "build", cmd[:50]
+        if _RE_GIT_FINISH.search(c):
+            return "git_finish", cmd[:50]
+        if _RE_GIT_INFO.search(c):
+            return "git_info", cmd[:50]
+        if _RE_INSTALL.search(c):
+            return "install", cmd[:50]
+        return "shell", cmd[:50]
+
+    if name == "Agent":
+        desc = (inp.get("description") or inp.get("prompt", ""))[:50]
+        return "sub_agent", desc
+
+    if name in _READ_TOOLS:
+        fp = inp.get("file_path") or inp.get("pattern") or inp.get("url", "")
+        return "read", Path(str(fp)).name if fp else name.lower()
+
+    return "other", name.lower()
+
+
+def compress_events(events: list[dict]) -> dict:
+    """Walk events once and produce a compressed summary for the Haiku gate.
+
+    Returns:
+        {
+            "recent_activity": [{step, action, target}, ...],  # last 15 tool actions
+            "session_summary": {
+                total_writes, total_reads, last_write_steps_ago,
+                last_git_commit_steps_ago, errors_recent
+            }
+        }
+    """
+    actions: list[dict] = []
+    total_writes = 0
+    total_reads = 0
+    last_write_step = -1
+    last_git_commit_step = -1
+    errors_recent = 0
+    step = 0
+
+    for event in events:
+        etype = event.get("type")
+
+        if etype == "assistant":
+            content = event.get("message", {}).get("content") or []
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                name = block.get("name", "")
+                inp = block.get("input") or {}
+                action, target = _categorize_tool(name, inp)
+                actions.append({"step": step, "action": action, "target": target})
+
+                if action == "write":
+                    total_writes += 1
+                    last_write_step = step
+                elif action == "read":
+                    total_reads += 1
+                elif action == "git_finish":
+                    cmd = (inp.get("command") or "").lower()
+                    if "commit" in cmd:
+                        last_git_commit_step = step
+                step += 1
+
+        elif etype == "user":
+            content = event.get("message", {}).get("content") or []
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("is_error") is True:
+                        errors_recent += 1
+
+    recent = actions[-15:] if len(actions) > 15 else actions
+    current_step = step
+
+    return {
+        "recent_activity": recent,
+        "session_summary": {
+            "total_writes": total_writes,
+            "total_reads": total_reads,
+            "last_write_steps_ago": (current_step - last_write_step) if last_write_step >= 0 else -1,
+            "last_git_commit_steps_ago": (current_step - last_git_commit_step) if last_git_commit_step >= 0 else -1,
+            "errors_recent": errors_recent,
+        },
+    }

@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import pytest
-from classify import classify, AIRBORNE, ON_APPROACH, HOLDING
+from classify import classify, AIRBORNE, ON_APPROACH, HOLDING, PREFLIGHT
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -73,33 +73,35 @@ class TestWriteTools:
 # ── Read tools → HOLDING ─────────────────────────────────────────────
 
 class TestReadTools:
+    """Read-only windows with no prior writes → PREFLIGHT (not HOLDING)."""
+
     def test_read(self):
         s, p = classify([assistant(("Read", {"file_path": "/app/auth.ts"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_glob(self):
         s, p = classify([assistant(("Glob", {"pattern": "**/*.ts"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_grep(self):
         s, p = classify([assistant(("Grep", {"pattern": "useState", "path": "/src"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_web_fetch(self):
         s, p = classify([assistant(("WebFetch", {"url": "https://docs.example.com"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_web_search(self):
         s, p = classify([assistant(("WebSearch", {"query": "react hooks"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_todo_read(self):
         s, p = classify([assistant(("TodoRead", {}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_ls(self):
         s, p = classify([assistant(("LS", {"path": "/app"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
 
 # ── Agent tool → AIRBORNE ─────────────────────────────────────────────
@@ -206,7 +208,7 @@ class TestBashGitFinish:
         assert s == ON_APPROACH, f"Expected ON_APPROACH for: {cmd!r}"
 
 
-# ── Bash: git info → HOLDING ─────────────────────────────────────────
+# ── Bash: git info → PREFLIGHT (read-only window) ───────────────────
 
 class TestBashGitInfo:
     @pytest.mark.parametrize("cmd", [
@@ -234,8 +236,9 @@ class TestBashGitInfo:
         "gh pr diff 123",
     ])
     def test_git_info(self, cmd):
+        """Solo git info commands in a read-only window → PREFLIGHT."""
         s, p = classify([assistant(("Bash", {"command": cmd}))])
-        assert s == HOLDING, f"Expected HOLDING for: {cmd!r}"
+        assert s == PREFLIGHT, f"Expected PREFLIGHT for: {cmd!r}"
 
 
 # ── Bash: installs → AIRBORNE ─────────────────────────────────────────
@@ -312,13 +315,14 @@ class TestMultiToolPriority:
         )])
         assert s == ON_APPROACH
 
-    def test_read_heavy_turn_stays_holding(self):
+    def test_read_heavy_turn_returns_preflight(self):
+        """All-read turn with no prior writes → PREFLIGHT."""
         s, p = classify([assistant(
             ("Read", {"file_path": "/app/a.ts"}),
             ("Glob", {"pattern": "**/*.ts"}),
             ("Grep", {"pattern": "useState"}),
         )])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_agent_after_read_in_same_turn(self):
         s, p = classify([assistant(
@@ -359,13 +363,14 @@ class TestMultiEventBatches:
         assert s == HOLDING
 
     def test_only_read_events(self):
+        """Multiple read events with no writes → PREFLIGHT."""
         events = [
             assistant(("Read", {"file_path": "/app/a.ts"})),
             assistant(("Read", {"file_path": "/app/b.ts"})),
             assistant(("Grep", {"pattern": "auth"})),
         ]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
 
 # ── Error density ─────────────────────────────────────────────────────
@@ -392,15 +397,16 @@ class TestErrorDensity:
         assert s == AIRBORNE
         assert "error" not in p.lower()
 
-    def test_errors_with_holding_no_tag(self):
+    def test_errors_with_preflight_no_tag(self):
         # Errors only tag when agent is AIRBORNE (actively working)
+        # Read-only window → PREFLIGHT, not HOLDING
         events = [
             assistant(("Read", {"file_path": "/app/auth.ts"})),
             user_error("permission denied"),
             user_error("permission denied"),
         ]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
         assert "error" not in p.lower()
 
     def test_successful_results_not_counted(self):
@@ -517,7 +523,7 @@ class TestEdgeCases:
 
     def test_read_with_url(self):
         s, p = classify([assistant(("WebFetch", {"url": "https://docs.react.dev"}))])
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_user_message_no_content_list(self):
         # user message with string content (initial prompt) — no crash

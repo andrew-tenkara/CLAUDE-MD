@@ -46,23 +46,30 @@ HELO_LEFT    = ["<H=-", "<H≡-"]
 # Elevator (rising from hangar deck)
 F14_ELEVATOR = ["[__]", "[-=]"]  # hatch open → jet appears
 
+# CAT_HOLD: like CAT but does NOT auto-advance to LAUNCH.
+# Loops spool animation indefinitely until status transitions to AIRBORNE.
+F14_CAT_HOLD = ["o==>", "O==>", "o==≫", "O==≫"]  # extended spool cycle
+
 # Phase → sprite list mapping (for phases that share simple frame tables)
 PHASE_SPRITES: dict[str, list[str] | str] = {
-    "ELEVATOR":    F14_ELEVATOR,
-    "DECK_PARK":   [F14_PARKED],
-    "DECK_IDLE":   F14_IDLE,
-    "TAXI_TO_CAT": F14_TAXI,
-    "CAT":         F14_CAT,
-    "LAUNCH":      F14_LAUNCH,
-    "CRUISE":      F14_CRUISE,
-    "ORDNANCE":    F14_BOMB,
-    "MAYDAY":      F14_MAYDAY,
-    "RETURN":      F14_RTN,
-    "DECEL":       F14_DECEL,
-    "TRAP":        F14_TRAP,
-    "TAXI_BACK":   F14_TAXI_BACK,
-    "AAR_REVERSE": F14_AAR_REVERSE,
-    "SAR_FLAMEOUT": F14_FLAMEOUT,
+    "ELEVATOR":       F14_ELEVATOR,
+    "DECK_PARK":      [F14_PARKED],
+    "DECK_IDLE":      F14_IDLE,
+    "TAXI_TO_CAT":    F14_TAXI,
+    "CAT":            F14_CAT,
+    "CAT_HOLD":       F14_CAT_HOLD,
+    "LAUNCH":         F14_LAUNCH,
+    "CRUISE":         F14_CRUISE,
+    "ORDNANCE":       F14_BOMB,
+    "MAYDAY":         F14_MAYDAY,
+    "RETURN":         F14_RTN,
+    "DECEL":          F14_DECEL,
+    "TRAP":           F14_TRAP,
+    "TAXI_BACK":      F14_TAXI_BACK,
+    "AAR_REVERSE":    F14_AAR_REVERSE,
+    "AAR_DISCONNECT": F14_CRUISE,    # separating from tanker, resuming cruise sprite
+    "SAR_FLAMEOUT":   F14_FLAMEOUT,
+    "SAR_REPLANE":    [F14_PARKED],  # fresh jet on deck
 }
 
 
@@ -204,9 +211,18 @@ class FlightOpsStrip(Static):
 
         if s == "AIRBORNE":
             # Let the full launch sequence play out
-            if sprite.phase in ("ELEVATOR", "DECK_IDLE", "DECK_PARK", "TAXI_TO_CAT", "CAT", "LAUNCH", "CRUISE", "ORDNANCE"):
+            if sprite.phase in ("ELEVATOR", "DECK_IDLE", "DECK_PARK", "TAXI_TO_CAT", "CAT", "CAT_HOLD", "LAUNCH", "CRUISE", "ORDNANCE"):
                 return sprite.phase
             return "ELEVATOR"  # start from elevator when going airborne
+
+        if s == "PREFLIGHT":
+            # On the cat, burners lit, holding for first write
+            if sprite.phase in ("ELEVATOR", "TAXI_TO_CAT", "CAT_HOLD"):
+                return sprite.phase
+            # From deck states → taxi to catapult hold
+            if sprite.phase in ("DECK_PARK", "DECK_IDLE"):
+                return "TAXI_TO_CAT"
+            return "TAXI_TO_CAT"
 
         if s == "IDLE":
             # Idle = on deck, engines warm, waiting for tasking
@@ -256,6 +272,10 @@ class FlightOpsStrip(Static):
                 elif s == "AAR":
                     sprite.phase = "AAR_REVERSE"
                     sprite.col = self._zone_col("SKY", 0.5)
+                elif s == "PREFLIGHT":
+                    # PREFLIGHT — elevator up, taxi to cat hold
+                    sprite.phase = "ELEVATOR"
+                    sprite.col = self._zone_col("DECK", 0.5)
                 elif s == "AIRBORNE":
                     # New/resumed — elevator up from hangar, then taxi to cat
                     sprite.phase = "ELEVATOR"
@@ -278,13 +298,38 @@ class FlightOpsStrip(Static):
                     s = status.upper()
                     prev = sprite.prev_status.upper()
 
-                    if s == "AIRBORNE" and prev in ("RECOVERED", "QUEUED", "IDLE", ""):
+                    if s == "PREFLIGHT" and prev in ("IDLE", "QUEUED", "RECOVERED", ""):
+                        # PREFLIGHT: taxi to catapult hold
+                        if sprite.phase in ("DECK_PARK", "DECK_IDLE"):
+                            new_phase = "TAXI_TO_CAT"
+                            sprite.phase_ticks = 0
+                            sprite.anim_frame = 0
+                        elif sprite.phase not in ("ELEVATOR", "TAXI_TO_CAT", "CAT_HOLD"):
+                            new_phase = "ELEVATOR"
+                            sprite.col = self._zone_col("DECK", 0.5)
+                            sprite.phase_ticks = 0
+                            sprite.anim_frame = 0
+
+                    elif s == "AIRBORNE" and prev == "PREFLIGHT":
+                        # PREFLIGHT → AIRBORNE: release from catapult hold
+                        if sprite.phase == "CAT_HOLD":
+                            new_phase = "CAT"
+                            sprite.phase_ticks = 0
+                            sprite.anim_frame = 0
+                        elif sprite.phase == "TAXI_TO_CAT":
+                            pass  # let taxi complete → CAT_HOLD → will catch next tick
+                        elif sprite.phase not in ("CAT", "LAUNCH", "CRUISE", "ORDNANCE"):
+                            new_phase = "TAXI_TO_CAT"
+                            sprite.phase_ticks = 0
+                            sprite.anim_frame = 0
+
+                    elif s == "AIRBORNE" and prev in ("RECOVERED", "QUEUED", "IDLE", ""):
                         # Launch sequence from wherever they're sitting
                         if sprite.phase in ("DECK_PARK", "DECK_IDLE"):
                             new_phase = "TAXI_TO_CAT"
                             sprite.phase_ticks = 0
                             sprite.anim_frame = 0
-                        elif sprite.phase not in ("ELEVATOR", "TAXI_TO_CAT", "CAT", "LAUNCH", "CRUISE", "ORDNANCE"):
+                        elif sprite.phase not in ("ELEVATOR", "TAXI_TO_CAT", "CAT", "CAT_HOLD", "LAUNCH", "CRUISE", "ORDNANCE"):
                             new_phase = "ELEVATOR"
                             sprite.col = self._zone_col("DECK", 0.5)
                             sprite.phase_ticks = 0
@@ -353,11 +398,12 @@ class FlightOpsStrip(Static):
                 # Rising from hangar deck — stationary, sprite alternates
                 sprite.col = self._zone_col("DECK", 0.5)
                 if sprite.phase_ticks >= PHASE_TICKS["ELEVATOR"]:
-                    # Elevator up → idle on deck or park depending on status
-                    if sprite.prev_status.upper() == "IDLE":
+                    # Elevator up → next phase depends on status
+                    s = sprite.prev_status.upper()
+                    if s == "IDLE":
                         sprite.phase = "DECK_IDLE"
                         sprite.col = self._zone_col("CAT", 0.0)
-                    elif sprite.prev_status.upper() == "AIRBORNE":
+                    elif s in ("AIRBORNE", "PREFLIGHT"):
                         sprite.phase = "TAXI_TO_CAT"
                     else:
                         sprite.phase = "DECK_PARK"
@@ -397,10 +443,21 @@ class FlightOpsStrip(Static):
                     sprite.col += 1
                 cat_start = self._zone_col("CAT", 0.3)
                 if sprite.col >= cat_start or sprite.phase_ticks >= PHASE_TICKS["TAXI_TO_CAT"]:
-                    sprite.phase = "CAT"
+                    # PREFLIGHT → hold on cat; AIRBORNE → spool and launch
+                    if sprite.prev_status.upper() == "PREFLIGHT":
+                        sprite.phase = "CAT_HOLD"
+                    else:
+                        sprite.phase = "CAT"
                     sprite.col = self._zone_col("CAT", 0.5)
                     sprite.phase_ticks = 0
                     sprite.anim_frame = 0
+
+            elif phase == "CAT_HOLD":
+                # Stationary on catapult, engine spool animation loops
+                # indefinitely. Does NOT auto-advance to LAUNCH.
+                # When status transitions to AIRBORNE, update_pilots sets
+                # phase to CAT which then auto-advances to LAUNCH.
+                pass
 
             elif phase == "CAT":
                 # Stationary engine spool on the catapult
@@ -657,9 +714,6 @@ class FlightOpsStrip(Static):
     def _get_sprite_text(self, sprite: FlightSprite) -> str:
         phase = sprite.phase
 
-        if phase == "SAR_REPLANE":
-            return F14_PARKED  # fresh jet on deck
-
         if phase in ("AAR_DOCK", "AAR_REFUEL"):
             return AAR_DOCKED
 
@@ -669,7 +723,7 @@ class FlightOpsStrip(Static):
                 return frames
             return frames[sprite.anim_frame % len(frames)]
 
-        # SAR phases without a sprite in main row
+        # SAR phases without a sprite in main row (jet is gone/ejected)
         return F14_PARKED
 
     def _get_sprite_style(self, sprite: FlightSprite) -> str:
@@ -695,6 +749,8 @@ class FlightOpsStrip(Static):
             return "bold dark_orange"  # warm idle — waiting for tasking
         if phase == "CAT":
             return "bold yellow"  # spool up glow
+        if phase == "CAT_HOLD":
+            return "bold dark_orange"  # holding on cat, burners lit
         if phase == "LAUNCH":
             return "bold bright_white"  # afterburner
         if sprite.prev_status.upper() == "IDLE":

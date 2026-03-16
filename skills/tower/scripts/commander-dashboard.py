@@ -146,7 +146,7 @@ def _ctx_remaining(ctx: dict) -> int:
 
 
 _FLIGHT_STATUS_MAP = {
-    "PREFLIGHT": "QUEUED",
+    "PREFLIGHT": "PREFLIGHT",
     "AIRBORNE": "AIRBORNE",
     "HOLDING": "IDLE",
     "ON_APPROACH": "ON_APPROACH",
@@ -1888,7 +1888,7 @@ class PriFlyCommander(App):
                     ss = json.loads(ss_path.read_text(encoding="utf-8"))
                     ss_age = int(time_mod.time()) - ss.get("timestamp", 0)
                     ss_status = ss.get("status", "").upper()
-                    if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED"):
+                    if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED", "PREFLIGHT"):
                         # Never let sentinel downgrade RECOVERED → something else
                         if pilot.status == "RECOVERED" and ss_status != "RECOVERED":
                             pass  # keep RECOVERED
@@ -1912,7 +1912,7 @@ class PriFlyCommander(App):
                         cmd_data = json.loads(cmd_path.read_text(encoding="utf-8"))
                         cmd_path.unlink()  # consume — one-shot
                         new_status = cmd_data.get("set_status", "").upper()
-                        if new_status in ("AIRBORNE", "IDLE", "RECOVERED", "ON_APPROACH", "MAYDAY", "AAR", "SAR"):
+                        if new_status in ("AIRBORNE", "IDLE", "RECOVERED", "ON_APPROACH", "MAYDAY", "AAR", "SAR", "PREFLIGHT"):
                             pilot.status = new_status
                             self._stale_frames.pop(pilot.callsign, None)
                             reason = cmd_data.get("reason", "command override")

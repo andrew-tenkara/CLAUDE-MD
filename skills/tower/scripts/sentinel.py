@@ -28,7 +28,8 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
-from classify import classify
+from classify import classify, compress_events
+from gate import gate_transition
 from parse_jsonl_metrics import CLAUDE_PROJECTS_DIR, encode_project_path, find_latest_session_file
 from read_sortie_state import read_sortie_state
 
@@ -36,11 +37,12 @@ log = logging.getLogger("sentinel")
 
 # ── Config ────────────────────────────────────────────────────────────
 
-DEBOUNCE_SECS  = 3.0   # Seconds after last JSONL write before classifying
-IDLE_THRESHOLD = 90    # Seconds of silence → write HOLDING / idle
-SYNC_INTERVAL  = 30    # Seconds between worktree rescans
-EVENT_WINDOW   = 100   # Rolling window size (events) per worktree
-HEARTBEAT_SECS = 10    # How often to write sentinel-heartbeat.json
+DEBOUNCE_SECS     = 3.0   # Seconds after last JSONL write before classifying
+IDLE_THRESHOLD    = 90    # Seconds of silence → write HOLDING / idle
+SYNC_INTERVAL     = 30    # Seconds between worktree rescans
+EVENT_WINDOW      = 100   # Rolling window size (events) per worktree
+HEARTBEAT_SECS    = 10    # How often to write sentinel-heartbeat.json
+PROPOSE_THRESHOLD = 3     # Consecutive identical proposals before calling gate
 
 
 # ── JSONL tail reader ─────────────────────────────────────────────────
@@ -85,6 +87,13 @@ class WatchState:
     idle_notified: bool = False
     # Rolling 100-event window — fed by _flush, read by classify()
     recent_events: deque = field(default_factory=lambda: deque(maxlen=EVENT_WINDOW))
+    # Gate state — confirmed status persists across flushes
+    confirmed_status: str = ""
+    confirmed_phase: str = ""
+    last_transition_time: float = field(default_factory=time.monotonic)
+    # Debounce counter: classifier must propose same new state N times before gate
+    proposed_count: int = 0
+    last_proposed: str = ""
 
 
 # ── Sentinel daemon ───────────────────────────────────────────────────
@@ -157,7 +166,13 @@ class Sentinel:
         t.start()
 
     def _flush(self, ticket_id: str) -> None:
-        """Read new JSONL lines, feed rolling window, classify, write status."""
+        """Read new JSONL lines, feed rolling window, classify, write status.
+
+        Two-layer anti-flicker:
+          1. Debounce counter: classifier must propose same new state 3 consecutive
+             times before Haiku gate is called (filters transient noise).
+          2. Haiku gate: approves/denies with narrative context + confidence.
+        """
         with self._lock:
             ws = self._watches.get(ticket_id)
         if not ws:
@@ -166,8 +181,11 @@ class Sentinel:
         with self._lock:
             ws.pending_timer = None
 
-        # Session ended — write RECOVERED deterministically, skip classify
+        # Session ended — bypass gate + debounce, write RECOVERED directly
         if (Path(ws.worktree_path) / ".sortie" / "session-ended").exists():
+            ws.confirmed_status = "RECOVERED"
+            ws.confirmed_phase = "session ended"
+            ws.proposed_count = 0
             self._write_status(ws.worktree_path, {"status": "RECOVERED", "phase": "session ended"})
             return
 
@@ -193,9 +211,77 @@ class Sentinel:
             ws.last_event_mono = time.monotonic()
             ws.idle_notified = False
 
-        status, phase = classify(list(ws.recent_events))
-        self._write_status(ws.worktree_path, {"status": status, "phase": phase})
-        log.info("[%s] %s — %s", ticket_id, status, phase)
+        events = list(ws.recent_events)
+        status, phase = classify(events)
+
+        # First classification — accept directly, no gate needed
+        if not ws.confirmed_status:
+            ws.confirmed_status = status
+            ws.confirmed_phase = phase
+            ws.last_transition_time = time.monotonic()
+            self._write_status(ws.worktree_path, {"status": status, "phase": phase})
+            log.info("[%s] initial: %s — %s", ticket_id, status, phase)
+            return
+
+        # Same as confirmed — just update phase text
+        if status == ws.confirmed_status:
+            ws.proposed_count = 0
+            ws.last_proposed = ""
+            ws.confirmed_phase = phase
+            self._write_status(ws.worktree_path, {"status": status, "phase": phase})
+            return
+
+        # Different from confirmed — debounce counter
+        if status == ws.last_proposed:
+            ws.proposed_count += 1
+        else:
+            ws.proposed_count = 1
+            ws.last_proposed = status
+
+        if ws.proposed_count < PROPOSE_THRESHOLD:
+            # Hold confirmed status, update phase text only
+            self._write_status(ws.worktree_path, {
+                "status": ws.confirmed_status,
+                "phase": phase,
+            })
+            log.debug("[%s] debounce %d/%d: %s → %s",
+                      ticket_id, ws.proposed_count, PROPOSE_THRESHOLD,
+                      ws.confirmed_status, status)
+            return
+
+        # Debounce threshold met — call Haiku gate
+        time_in_current = time.monotonic() - ws.last_transition_time
+        compressed = compress_events(events)
+
+        result = gate_transition(
+            current=ws.confirmed_status,
+            proposed=status,
+            time_in_current_secs=time_in_current,
+            compressed=compressed,
+        )
+
+        if result.approved:
+            ws.confirmed_status = result.final_status
+            ws.confirmed_phase = result.phase if result.phase else phase
+            ws.last_transition_time = time.monotonic()
+            ws.proposed_count = 0
+            ws.last_proposed = ""
+            self._write_status(ws.worktree_path, {
+                "status": ws.confirmed_status,
+                "phase": ws.confirmed_phase,
+            })
+            log.info("[%s] gate approved: %s — %s (%s)",
+                     ticket_id, ws.confirmed_status, ws.confirmed_phase, result.reason)
+        else:
+            # Denied — reset counter, hold confirmed status
+            ws.proposed_count = 0
+            ws.last_proposed = ""
+            self._write_status(ws.worktree_path, {
+                "status": ws.confirmed_status,
+                "phase": ws.confirmed_phase,
+            })
+            log.info("[%s] gate denied: %s → %s (%s)",
+                     ticket_id, ws.confirmed_status, status, result.reason)
 
     # ── JSONL watchdog ────────────────────────────────────────────────
 
@@ -294,6 +380,11 @@ class Sentinel:
                                     # Clear window so stale events don't bleed
                                     # into the next active phase classification
                                     ws.recent_events.clear()
+                                    # Bypass gate + debounce for idle timeout
+                                    ws.confirmed_status = "HOLDING"
+                                    ws.confirmed_phase = f"idle {idle_secs}s"
+                                    ws.proposed_count = 0
+                                    ws.last_proposed = ""
                             self._write_status(wpath, {
                                 "status": "HOLDING",
                                 "phase": f"idle {idle_secs}s",

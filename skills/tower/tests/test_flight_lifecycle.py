@@ -1,12 +1,12 @@
 """Flight lifecycle tests for the rule-based agent activity classifier.
 
 Tests the full arc of agent behavior:
-  1. Preflight (startup reads)        → HOLDING
+  1. Preflight (startup reads)        → PREFLIGHT
   2. Takeoff (first writes)           → AIRBORNE
   3. Cruise (active coding)           → AIRBORNE
   4. On approach (git push/tests)     → ON_APPROACH
   5. Idle                             → HOLDING
-  6. Re-read after idle (preflight 2) → HOLDING (window cleared on idle)
+  6. Re-read after idle (preflight 2) → PREFLIGHT (window cleared on idle)
   7. Second takeoff                   → AIRBORNE
 
 Uses real JSONL fixtures from ENG-118 session alongside synthetic events.
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from classify import classify, AIRBORNE, ON_APPROACH, HOLDING
+from classify import classify, AIRBORNE, ON_APPROACH, HOLDING, PREFLIGHT
 
 # ── Real JSONL fixture loader ─────────────────────────────────────────
 
@@ -94,10 +94,12 @@ def _bash(cmd: str) -> dict:
 # ── Phase 1: Preflight (startup reads only) ───────────────────────────
 
 class TestPreflight:
-    def test_initial_directive_read_is_holding(self):
+    """Startup reads with no writes in window → PREFLIGHT."""
+
+    def test_initial_directive_read_is_preflight(self):
         events = [_read("/worktree/.sortie/directive.md"), _user_ok("# Directive")]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_reading_multiple_files_at_start(self):
         events = [
@@ -106,44 +108,44 @@ class TestPreflight:
             _read("/worktree/package.json"), _user_ok(),
         ]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
-    def test_glob_exploration_is_holding(self):
+    def test_glob_exploration_is_preflight(self):
         events = [
             _glob("src/**/*.ts"), _user_ok("a.ts\nb.ts"),
             _glob("src/**/*.tsx"), _user_ok("App.tsx"),
             _grep("useState"), _user_ok("src/App.tsx:3:"),
         ]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
-    def test_narration_before_action_is_holding(self):
+    def test_narration_before_action_is_preflight(self):
         events = [
             _assistant(text="Let me read the codebase first to understand the structure."),
             _read("/worktree/src/index.ts"), _user_ok(),
         ]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
-    def test_git_status_check_is_holding(self):
+    def test_git_status_check_is_preflight(self):
         events = [_bash("git status"), _user_ok("On branch feature/foo")]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
-    def test_git_log_check_is_holding(self):
+    def test_git_log_check_is_preflight(self):
         events = [_bash("git log --oneline -5"), _user_ok("abc123 prev commit")]
         s, p = classify(events)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     @needs_fixture
-    def test_real_startup_phase_is_holding(self):
-        """Real ENG-118: first 20 events are all reads — should be HOLDING."""
+    def test_real_startup_phase_is_preflight(self):
+        """Real ENG-118: first 20 events are all reads — should be PREFLIGHT."""
         s, p = classify(_REAL_EVENTS[:20])
-        assert s == HOLDING, f"Expected HOLDING for startup reads, got {s!r} ({p!r})"
+        assert s == PREFLIGHT, f"Expected PREFLIGHT for startup reads, got {s!r} ({p!r})"
 
     @needs_fixture
-    def test_real_events_before_first_write_are_holding(self):
-        """Real ENG-118: events before index 27 (first Write) → HOLDING."""
+    def test_real_events_before_first_write_are_preflight(self):
+        """Real ENG-118: events before index 27 (first Write) → PREFLIGHT."""
         preflight = _REAL_EVENTS[:27]
         assert all(
             e.get("type") != "assistant" or not any(
@@ -154,7 +156,7 @@ class TestPreflight:
             for e in preflight
         ), "Fixture slice should contain no Write/Edit"
         s, p = classify(preflight)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
 
 # ── Phase 2: Takeoff (first write appears) ───────────────────────────
@@ -342,16 +344,16 @@ class TestIdleAndResume:
     from stale old writes).
     """
 
-    def test_reads_after_cleared_window_are_holding(self):
-        """After window clear (idle), reads correctly show HOLDING."""
+    def test_reads_after_cleared_window_are_preflight(self):
+        """After window clear (idle), reads correctly show PREFLIGHT."""
         # Simulate: agent was active, then went idle (sentinel clears window),
-        # now wakes up and starts reading again.
+        # now wakes up and starts reading again — fresh window, no old writes.
         post_idle_events = [
             _read("/worktree/.sortie/directive.md"), _user_ok(),
             _glob("src/**/*.ts"), _user_ok(),
         ]
         s, p = classify(post_idle_events)  # fresh window, no old writes
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_stale_writes_followed_by_reads_show_holding(self):
         """With last-action-wins, reads after old writes correctly show HOLDING.
@@ -379,9 +381,9 @@ class TestIdleAndResume:
 
     def test_full_lifecycle_with_window_clear(self):
         """Simulates complete lifecycle: preflight → active → idle-clear → preflight → active."""
-        # Phase 1: preflight
+        # Phase 1: preflight (read-only window)
         s, _ = classify([_read("/worktree/directive.md"), _user_ok()])
-        assert s == HOLDING, "Phase 1 should be HOLDING"
+        assert s == PREFLIGHT, "Phase 1 should be PREFLIGHT"
 
         # Phase 2: active coding — last action is pnpm test → ON_APPROACH
         s, _ = classify([
@@ -399,7 +401,7 @@ class TestIdleAndResume:
             _read("/worktree/directive.md"), _user_ok(),
             _glob("src/**/*.ts"), _user_ok(),
         ])
-        assert s == HOLDING, "Phase 4 post-idle reads should be HOLDING"
+        assert s == PREFLIGHT, "Phase 4 post-idle reads should be PREFLIGHT"
 
         # Phase 5: new task starts
         s, _ = classify(cleared_window + [
@@ -408,14 +410,14 @@ class TestIdleAndResume:
         ])
         assert s == AIRBORNE, "Phase 5 new write should be AIRBORNE"
 
-    def test_post_idle_git_read_is_holding(self):
-        """Post-idle: checking git status before next action = HOLDING."""
+    def test_post_idle_git_read_is_preflight(self):
+        """Post-idle: checking git status before next action = PREFLIGHT."""
         post_idle = [
             _bash("git status"), _user_ok(),
             _bash("git log --oneline -3"), _user_ok(),
         ]
         s, p = classify(post_idle)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_post_idle_install_then_write_is_airborne(self):
         """Post-idle: install deps → write files = AIRBORNE."""
@@ -438,7 +440,7 @@ class TestMultiTaskSession:
             _bash("git checkout -b feature/task2"), _user_ok(),
         ]
         s, _ = classify(task2_start)
-        assert s == HOLDING
+        assert s == PREFLIGHT
 
     def test_rapid_task_switch_no_idle(self):
         """Writes → commit → reads: last action is Read → HOLDING (reading for task 2)."""
