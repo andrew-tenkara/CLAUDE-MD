@@ -48,22 +48,28 @@ def _make_response(approved=True, final_status="AIRBORNE", phase="coding",
 # ── No API key → auto-approve ────────────────────────────────────────
 
 class TestGracefulDegradation:
+    def _no_key_context(self):
+        """Context manager that removes both env var and key file."""
+        from contextlib import contextmanager
+        @contextmanager
+        def ctx():
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}):
+                with patch("gate.Path.home", return_value=Path("/nonexistent")):
+                    yield
+        return ctx()
+
     def test_no_api_key_auto_approves(self):
-        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}):
+        """No env var, no key file → graceful degradation."""
+        with self._no_key_context():
             result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
         assert result.approved is True
         assert result.final_status == "AIRBORNE"
         assert "no API key" in result.reason
 
     def test_missing_api_key_env(self):
-        with patch.dict("os.environ", {}, clear=True):
-            # Remove ANTHROPIC_API_KEY entirely
-            import os
-            env = dict(os.environ)
-            env.pop("ANTHROPIC_API_KEY", None)
-            with patch.dict("os.environ", env, clear=True):
-                result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
-            assert result.approved is True
+        with self._no_key_context():
+            result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+        assert result.approved is True
 
     def test_sdk_import_error_auto_approves(self):
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):

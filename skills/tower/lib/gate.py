@@ -13,6 +13,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 log = logging.getLogger("gate")
@@ -95,6 +96,13 @@ def gate_transition(
     so the system degrades to rule-based-only behavior.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        # Fall back to dedicated key file (avoids polluting shell env)
+        key_file = Path.home() / ".config" / "anthropic" / "api_key"
+        try:
+            api_key = key_file.read_text().strip()
+        except OSError:
+            pass
     if not api_key:
         log.debug("no API key — auto-approving %s → %s", current, proposed)
         return GateResult(

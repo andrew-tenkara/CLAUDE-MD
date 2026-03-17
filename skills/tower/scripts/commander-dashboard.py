@@ -334,6 +334,9 @@ class PriFlyCommander(App):
         # Board dirty tracking — skip table rebuild when state hasn't changed
         self._board_state_sig: str = ""
 
+        # Dismissed tickets — prevents _sync_legacy_agents from re-adding them
+        self._dismissed_tickets: set[str] = set()
+
     def compose(self) -> ComposeResult:
         yield PriFlyHeader(id="header-bar")
         yield Static(
@@ -456,6 +459,54 @@ class PriFlyCommander(App):
         except (ProcessLookupError, PermissionError, OSError):
             pass  # Already dead or can't kill
 
+        # Kill any other orphaned sentinels we didn't spawn
+        try:
+            import signal
+            result = subprocess.run(
+                ["pgrep", "-f", "sentinel.py"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for pid_str in result.stdout.strip().splitlines():
+                try:
+                    os.kill(int(pid_str), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError, ValueError):
+                    pass
+        except Exception:
+            pass
+
+        # Kill managed dev servers
+        try:
+            servers_file = Path(self._project_dir) / ".sortie" / "managed-servers.json"
+            if servers_file.exists():
+                import json as _json
+                entries = _json.loads(servers_file.read_text(encoding="utf-8"))
+                for entry in entries:
+                    pid = entry.get("pid")
+                    if pid:
+                        try:
+                            os.kill(int(pid), 15)
+                        except (ProcessLookupError, PermissionError, OSError, ValueError):
+                            pass
+                servers_file.write_text("[]")
+        except Exception:
+            pass
+
+        # Clean state files
+        try:
+            import shutil
+            state_dir = Path("/tmp/uss-tenkara/_prifly")
+            if state_dir.exists():
+                shutil.rmtree(state_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+        try:
+            hb = Path(self._project_dir) / ".sortie" / "sentinel-heartbeat.json"
+            if hb.exists():
+                hb.unlink()
+        except Exception:
+            pass
+
     # ── Legacy agent sync (worktree-based agents) ─────────────────────
 
     def _sync_legacy_agents(self) -> None:
@@ -494,11 +545,15 @@ class PriFlyCommander(App):
 
     def _apply_legacy_state(self, state) -> None:
         """Apply sortie state to the pilot roster (main thread)."""
-        self._dismiss_splash()
         seen_tickets: set[str] = set()
         for agent in state.agents:
             tid = agent.ticket_id
             seen_tickets.add(tid)
+
+            # Skip dismissed agents — user hit Z, don't resurrect
+            if tid in self._dismissed_tickets:
+                continue
+
             self._legacy_agents[tid] = agent
 
             # Skip if this agent was spawned by us (stream-json managed)
@@ -522,13 +577,9 @@ class PriFlyCommander(App):
                 # New legacy agent — register in roster
                 # If title == ticket_id, try Linear lookup
                 title = agent.title
-                if title == tid and is_ticket_id(tid):
-                    try:
-                        ticket = fetch_ticket(tid)
-                        if ticket:
-                            title = ticket.title[:60]
-                    except Exception:
-                        pass
+                # Note: Linear title lookup removed from sync path — it was
+                # blocking the main thread with HTTP calls. Title gets populated
+                # by the XO or when the user opens a briefing.
                 pilot = self._roster.assign(
                     ticket_id=tid,
                     model=agent.model if agent.model not in ("unknown", "Unknown", "") else "sonnet",
@@ -668,6 +719,10 @@ class PriFlyCommander(App):
         # Mark legacy agents that disappeared as RECOVERED
         for tid, agent_state in list(self._legacy_agents.items()):
             if tid not in seen_tickets:
+                if tid in self._dismissed_tickets:
+                    # Already dismissed by user — just clean up tracking
+                    self._legacy_agents.pop(tid, None)
+                    continue
                 pilots = self._roster.get_by_ticket(tid)
                 for p in pilots:
                     if not self._agent_mgr.get(p.callsign):  # Not stream-json managed
@@ -1125,21 +1180,31 @@ class PriFlyCommander(App):
                 self._add_radio("PRI-FLY", "Failed to open browser", "error")
 
     def action_dismiss_selected(self) -> None:
-        """Remove a RECOVERED pilot from the board and delete their git worktree."""
+        """Remove a pilot from the board and delete their git worktree."""
         import threading, shutil
         pilot = self._get_selected_pilot()
         if not pilot:
-            self._add_radio("PRI-FLY", "No pilot selected", "error")
+            # Debug: check why selection failed
+            try:
+                table = self.query_one("#agent-table", DataTable)
+                self._add_radio("PRI-FLY", f"No pilot selected (rows={table.row_count}, cursor={table.cursor_row}, sorted={len(self._sorted_pilots)})", "error")
+            except Exception:
+                self._add_radio("PRI-FLY", "No pilot selected (table error)", "error")
             return
-        if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE"):
-            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — only RECOVERED/MAYDAY/IDLE can be dismissed", "error")
-            return
+        # Kill active agent if still running before dismissing
+        if pilot.status in ("AIRBORNE", "AAR", "SAR", "ON_APPROACH"):
+            try:
+                self._agent_mgr.wave_off(pilot.callsign)
+            except Exception:
+                pass
         callsign = pilot.callsign
         tid = pilot.ticket_id
-        worktree_path = pilot.worktree_path
         project_dir = self._project_dir
+        # Resolve to absolute path — worktree_path may be relative
+        worktree_path = str(Path(project_dir) / pilot.worktree_path) if pilot.worktree_path and not Path(pilot.worktree_path).is_absolute() else pilot.worktree_path
         self._roster.remove(callsign)
         self._legacy_agents.pop(tid, None)
+        self._dismissed_tickets.add(tid)  # prevent re-add by _sync_legacy_agents
         self._board_state_sig = ""  # force table rebuild
         self._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
         self._refresh_ui()
@@ -1164,6 +1229,7 @@ class PriFlyCommander(App):
                         pass
                 else:
                     # Not a registered worktree (or git failed) — nuke the dir directly
+                    log.warning("git worktree remove failed for %s: %s", worktree_path, result.stderr.strip())
                     shutil.rmtree(worktree_path, ignore_errors=True)
                     try:
                         self.call_from_thread(

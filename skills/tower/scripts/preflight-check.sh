@@ -48,35 +48,34 @@ echo ""
 # ── 2. API Keys ──────────────────────────────────────────────────────
 echo "── API KEYS ──"
 
+KEY_FILE="$HOME/.config/anthropic/api_key"
+
 check_api_key() {
     local name="$1"
     local env_var="$2"
     local value="${!env_var:-}"
+
+    # Fall back to dedicated key file
+    if [ -z "$value" ] && [ -f "$KEY_FILE" ]; then
+        value=$(cat "$KEY_FILE" 2>/dev/null)
+    fi
+
     if [ -n "$value" ]; then
         local masked="${value:0:12}...${value: -4}"
-        echo "  $PASS $name ($masked)"
+        if [ -f "$KEY_FILE" ]; then
+            echo "  $PASS $name ($masked) — from $KEY_FILE"
+        else
+            echo "  $PASS $name ($masked) — from env"
+        fi
     else
         echo "  $FAIL $name — not set"
-        echo "    Fix: Add this line to $SHELL_RC:"
-        echo "    export $env_var=\"\""
-        echo "    Then run: source $SHELL_RC"
+        echo "    Fix: mkdir -p ~/.config/anthropic && echo 'your-key' > ~/.config/anthropic/api_key"
+        echo "    Or: export $env_var=\"\" in $SHELL_RC"
         issues=$((issues + 1))
     fi
 }
 
 check_api_key "Anthropic API Key" "ANTHROPIC_API_KEY"
-
-# Check if key is also in shell rc for persistence
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
-    if grep -q "ANTHROPIC_API_KEY" "$SHELL_RC" 2>/dev/null; then
-        echo "    (persisted in $SHELL_RC)"
-    else
-        echo "  $WARN Key is set in current session but NOT persisted in $SHELL_RC"
-        echo "    Fix: Add to $SHELL_RC:"
-        echo "    export ANTHROPIC_API_KEY=\"$ANTHROPIC_API_KEY\""
-        warnings=$((warnings + 1))
-    fi
-fi
 
 echo ""
 

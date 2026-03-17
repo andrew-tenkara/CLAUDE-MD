@@ -8,17 +8,18 @@ command: /tq
 
 Prep a worktree and add the pilot to the TUI board. The agent sits on deck as IDLE until you deploy from the TUI with **D** (open pane) or **R** (resume/launch).
 
-**Requires Tower to be running.** If Tower isn't up, tell the user:
-"Tower's not running. Launch with `/tower <project-dir>` first, or use `/sortie` for interactive mode."
+**Requires Tower to be running.** Check with:
 
 ## Preflight Check
 
 ```bash
-[ -f /tmp/uss-tenkara/_prifly/window_id ]
+[ -f /tmp/uss-tenkara/_prifly/agents_window_id ] || [ -f /tmp/uss-tenkara/_prifly/tower_running ]
 ```
 
-If the file doesn't exist, Tower hasn't been launched. Tell the user:
+If NEITHER file exists, Tower hasn't been launched. Tell the user:
 "Tower's not running. Launch with `/tower <project-dir>` first, or use `/sortie` for interactive mode."
+
+**IMPORTANT:** If Tower was just launched in this session, these files exist. Do not second-guess this check with other methods. If the check passes, Tower is running.
 
 ## Input Detection
 

@@ -79,5 +79,9 @@ PB_SESSION_ID=$(echo "$RESULT" | cut -d',' -f2)
 echo "$PB_WINDOW_ID" > "$STATE_DIR/agents_window_id"
 echo "$PB_SESSION_ID" > "$STATE_DIR/agents_last_session_id"
 
+# Marker files for Tower detection (XO and scripts check these)
+echo "$PB_WINDOW_ID" > "$STATE_DIR/window_id"
+echo "running" > "$STATE_DIR/tower_running"
+
 echo "Pri-Fly commander launched in new iTerm2 window"
 echo "Pit Boss window ready for agent panes"
