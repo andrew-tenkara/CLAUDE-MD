@@ -129,7 +129,7 @@ class CommandDispatcher:
         pilot.status = "IDLE"
         pilot.launched_at = time_mod.time()
 
-        ctx._open_agent_pane(pilot)
+        self._launch_agent(pilot, directive)
         ctx._add_radio("PRI-FLY", f"ON DECK — {pilot.callsign} standing by for {identifier}", "success")
         if getattr(ctx, '_rtk_active', False):
             ctx._add_radio(pilot.callsign, "RTK active — drop tanks fitted, extended range", "system")
@@ -310,7 +310,10 @@ class CommandDispatcher:
             ctx._add_radio("PRI-FLY", "Usage: /recall <callsign>", "system")
             return
         callsign = args[0]
-        if ctx._agent_mgr.recall(callsign):
+        # Try SDK first, then legacy
+        if ctx._sdk_mgr and ctx._sdk_mgr.recall(callsign):
+            ctx._add_radio("PRI-FLY", f"RECALL — {callsign} winding down (SDK)", "system")
+        elif ctx._agent_mgr.recall(callsign):
             ctx._add_radio("PRI-FLY", f"RECALL — {callsign} winding down", "system")
         else:
             ctx._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
@@ -325,7 +328,10 @@ class CommandDispatcher:
             pilot = ctx._roster.get_by_callsign(callsign)
             if pilot:
                 self._kill_managed_servers(pilot.ticket_id, callsign)
-            if ctx._agent_mgr.wave_off(callsign):
+            # Try SDK first, then legacy
+            if ctx._sdk_mgr and ctx._sdk_mgr.wave_off(callsign):
+                ctx._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated (SDK)", "error")
+            elif ctx._agent_mgr.wave_off(callsign):
                 ctx._add_radio("PRI-FLY", f"WAVE OFF — {callsign} terminated", "error")
             else:
                 ctx._add_radio("PRI-FLY", f"No active agent: {callsign}", "error")
@@ -389,11 +395,37 @@ class CommandDispatcher:
         else:
             self.trigger_compact(target)
 
+    def _launch_agent(self, pilot, directive: str) -> None:
+        """Launch an agent via SDK (if available) or iTerm2 pane (fallback)."""
+        ctx = self.ctx
+        if ctx._sdk_enabled and ctx._sdk_mgr and pilot.worktree_path:
+            # SDK path — in-process agent
+            disallowed = [
+                "Bash(git push --force*)", "Bash(git push -f *)",
+                "Bash(git reset --hard*)", "Bash(rm *)", "Bash(sudo *)",
+            ]
+            ctx._sdk_mgr.spawn(
+                callsign=pilot.callsign,
+                model=pilot.model,
+                cwd=str(Path(ctx._project_dir) / pilot.worktree_path) if not Path(pilot.worktree_path).is_absolute() else pilot.worktree_path,
+                directive=directive,
+                disallowed_tools=disallowed,
+            )
+            ctx._add_radio(pilot.callsign, "SDK agent launched — in-process", "success")
+        else:
+            # Legacy path — iTerm2 pane
+            ctx._open_agent_pane(pilot)
+
     def trigger_compact(self, callsign: str) -> None:
         ctx = self.ctx
         pilot = ctx._roster.get_by_callsign(callsign)
         if pilot and pilot.status == "AIRBORNE":
             pilot.status = "AAR"
+            # SDK agents don't support mid-stream injection yet
+            # TODO: implement via SDK continue_conversation or prompt streaming
+            if ctx._is_sdk_agent(callsign):
+                ctx._add_radio("PRI-FLY", f"AAR — {callsign} (SDK compact not yet supported, agent continues)", "system")
+                return
             ctx._agent_mgr.inject_message(
                 callsign,
                 "CIC: Context compaction requested. Summarize your progress, "
@@ -562,7 +594,7 @@ class CommandDispatcher:
         pilot.status = "IDLE"
         pilot.launched_at = time_mod.time()
 
-        ctx._open_agent_pane(pilot)
+        self._launch_agent(pilot, directive)
         ctx._add_radio("PRI-FLY", f"ON DECK — {pilot.callsign} resuming in {worktree_path}", "success")
         _notify("USS TENKARA", f"{pilot.callsign} on deck — resuming")
         ctx._refresh_ui()

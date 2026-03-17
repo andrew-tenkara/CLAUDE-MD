@@ -22,6 +22,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from agent_manager import AgentManager, AgentProcess, StreamEvent
+from sdk_bridge import SdkAgentManager, SdkAgent, AgentEvent, sdk_available
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
 from mission_queue import Mission, MissionQueue
 from linear_bridge import (
@@ -65,7 +66,7 @@ from constants import (
 from status_engine import (
     _play_sound, _notify, _ctx_remaining, _map_flight_status,
     _flight_status_is_stale, _clear_flight_status, _derive_legacy_status,
-    StatusReconciler, StatusTransition,
+    StatusReconciler, StatusTransition, validate_transition,
 )
 
 
@@ -288,6 +289,20 @@ class PriFlyCommander(App):
             on_event=self._on_agent_event,
             on_exit=self._on_agent_exit,
         )
+
+        # SDK agent manager — in-process agents via Claude Agent SDK
+        self._sdk_mgr = SdkAgentManager(
+            on_event=self._on_sdk_agent_event,
+            on_exit=self._on_sdk_agent_exit,
+        ) if sdk_available() else None
+        self._sdk_enabled = sdk_available()
+
+        # SDK event batching — accumulate events, apply on UI tick (3s)
+        # Prevents sprite flicker from high-frequency SDK event streams
+        self._sdk_event_buffer: dict[str, list["AgentEvent"]] = {}  # callsign → pending events
+        self._sdk_last_status_update: dict[str, float] = {}  # callsign → last status change time
+        self._sdk_status_debounce_secs: float = 1.0  # min seconds between status transitions
+
         self._radio_log: list[dict] = []
         self._chat_panes: dict[str, ChatPane] = {}
         self._slot_map: dict[int, str] = {}  # slot_index -> callsign
@@ -446,6 +461,12 @@ class PriFlyCommander(App):
             log.warning("Agent manager shutdown error: %s", e)
 
         try:
+            if self._sdk_mgr:
+                self._sdk_mgr.shutdown()
+        except Exception as e:
+            log.warning("SDK agent manager shutdown error: %s", e)
+
+        try:
             if self._observer:
                 self._observer.stop()
                 self._observer.join(timeout=2)
@@ -565,6 +586,8 @@ class PriFlyCommander(App):
             )
             if existing_pilot and self._agent_mgr.get(existing_pilot.callsign):
                 continue  # Managed by stream-json — don't overwrite
+            if existing_pilot and self._sdk_mgr and self._sdk_mgr.get(existing_pilot.callsign):
+                continue  # Managed by SDK — event stream is authoritative
 
             # Derive commander status from legacy state
             cic_status = _derive_legacy_status(agent)
@@ -648,7 +671,8 @@ class PriFlyCommander(App):
                             # Map sentinel status through flight-status map
                             # (HOLDING → IDLE, others pass through)
                             mapped = _FLIGHT_STATUS_MAP.get(ss_status, ss_status)
-                            pilot.status = mapped if mapped else ss_status
+                            target = mapped if mapped else ss_status
+                            pilot.status = validate_transition(pilot.status, target)
                         phase = ss.get("phase", "")
                         if phase:
                             pilot.flight_phase = phase
@@ -698,7 +722,7 @@ class PriFlyCommander(App):
                 mapped = _map_flight_status(agent.flight_status)
                 if mapped and mapped != pilot.status:
                     old = pilot.status
-                    pilot.status = mapped
+                    pilot.status = validate_transition(old, mapped)
                     self._reconciler.stale_frames.pop(pilot.callsign, None)
                     if mapped == "RECOVERED":
                         self._add_radio(pilot.callsign, f"RECOVERED — {agent.flight_phase or 'mission complete'}", "success")
@@ -776,6 +800,120 @@ class PriFlyCommander(App):
             self.call_from_thread(self._handle_agent_exit, callsign, return_code)
         except Exception:
             pass
+
+    # ── SDK agent event callbacks ─────────────────────────────────────
+
+    def _on_sdk_agent_event(self, callsign: str, event: "AgentEvent") -> None:
+        """Called from SDK agent thread — must use call_from_thread."""
+        try:
+            self.call_from_thread(self._handle_sdk_event, callsign, event)
+        except Exception:
+            pass
+
+    def _on_sdk_agent_exit(self, callsign: str, return_code: int) -> None:
+        try:
+            self.call_from_thread(self._handle_agent_exit, callsign, return_code)
+        except Exception:
+            pass
+
+    def _handle_sdk_event(self, callsign: str, event: "AgentEvent") -> None:
+        """Process SDK agent event on the main thread."""
+        try:
+            self._handle_sdk_event_inner(callsign, event)
+        except Exception as e:
+            log.warning("SDK event handler error for %s: %s", callsign, e)
+
+    def _handle_sdk_event_inner(self, callsign: str, event: "AgentEvent") -> None:
+        pilot = self._roster.get_by_callsign(callsign)
+        if not pilot:
+            return
+
+        sdk_agent = self._sdk_mgr.get(callsign) if self._sdk_mgr else None
+
+        # ── Always-immediate: telemetry sync (numbers only, no status change) ──
+        if sdk_agent:
+            pilot.tokens_used = sdk_agent.total_tokens
+            pilot.tool_calls = sdk_agent.tool_calls
+            pilot.error_count = sdk_agent.error_count
+            pilot.fuel_pct = sdk_agent.fuel_pct
+            pilot.last_tool_at = sdk_agent.last_tool_at
+
+        # ── Always-immediate: chat pane routing ──
+        if callsign in self._chat_panes:
+            pane = self._chat_panes[callsign]
+            if event.type == "text" and event.text:
+                pane.add_message("assistant", event.text)
+            elif event.type == "tool_use":
+                pane.add_message("tool", event.tool_name, tool_name=event.tool_name, tool_input=event.tool_input)
+            pane.refresh_header()
+
+        # ── Always-immediate: radio chatter (throttled to first line only) ──
+        if event.type == "text" and event.text:
+            first_line = event.text.split("\n")[0].strip()
+            if first_line and len(first_line) > 5:
+                self._add_radio(callsign, first_line[:120])
+        if event.type == "error":
+            self._add_radio(callsign, f"ERROR — {event.error}", "error")
+
+        # ── Debounced: status transitions ──
+        # Prevents sprite flicker from rapid event streams.
+        # Status changes are only applied if enough time has passed since
+        # the last transition for this callsign.
+        now = time_mod.time()
+        last_change = self._sdk_last_status_update.get(callsign, 0)
+        can_transition = (now - last_change) >= self._sdk_status_debounce_secs
+
+        if sdk_agent and can_transition:
+            prev_status = pilot.status
+            new_status = prev_status  # default: no change
+
+            # IDLE → AIRBORNE: first token flow
+            if prev_status == "IDLE" and sdk_agent.total_tokens > 0:
+                new_status = "AIRBORNE"
+
+            # AIRBORNE fuel checks
+            if prev_status == "AIRBORNE":
+                if pilot.fuel_pct <= 0:
+                    new_status = "SAR"
+                elif pilot.fuel_pct <= 30 and callsign not in self._reconciler.bingo_notified:
+                    self._reconciler.bingo_notified.add(callsign)
+                    _play_sound("bingo")
+                    self._add_radio(callsign, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
+
+            # AAR fuel check — can still flame out during compaction
+            if prev_status == "AAR" and pilot.fuel_pct <= 0:
+                new_status = "SAR"
+
+            # Apply transition through validator (ensures logical ordering)
+            if new_status != prev_status:
+                validated = validate_transition(prev_status, new_status)
+                pilot.status = validated
+                self._sdk_last_status_update[callsign] = now
+
+                if validated == "AIRBORNE" and prev_status == "IDLE":
+                    self._add_radio(callsign, "LAUNCH — tokens flowing, going AIRBORNE", "success")
+                    _notify("USS TENKARA — LAUNCH", f"{callsign} AIRBORNE")
+                elif validated == "SAR":
+                    _play_sound("mayday")
+                    self._add_radio(callsign, "FLAMEOUT — ZERO FUEL", "error")
+                elif validated == "ON_APPROACH":
+                    self._add_radio(callsign, "ON APPROACH — returning to base", "system")
+                elif validated != new_status:
+                    # Validator inserted an intermediate — log it
+                    self._add_radio(callsign, f"{prev_status} → {validated} (intermediate for {new_status})", "system")
+
+        # Update mood (cheap, OK to run every event)
+        pilot.mood = derive_mood(pilot)
+
+        # Flight strip update throttled to status changes only
+        # (the 3s _refresh_ui timer handles periodic strip updates)
+        if sdk_agent and pilot.status != getattr(self, '_sdk_last_strip_status_' + callsign, ''):
+            setattr(self, '_sdk_last_strip_status_' + callsign, pilot.status)
+            try:
+                strip = self.query_one("#flight-strip", FlightOpsStrip)
+                strip.update_pilots(self._roster.all_pilots())
+            except Exception:
+                pass
 
     def _handle_agent_event(self, callsign: str, event: StreamEvent) -> None:
         """Process agent event on the main thread.
@@ -1126,6 +1264,10 @@ class PriFlyCommander(App):
             pass
 
     # ── Hotkey actions (context-sensitive on selected pilot) ─────────
+
+    def _is_sdk_agent(self, callsign: str) -> bool:
+        """Check if a callsign is managed by the SDK agent manager."""
+        return bool(self._sdk_mgr and self._sdk_mgr.get(callsign))
 
     def _get_selected_pilot(self) -> Optional[Pilot]:
         """Get the currently selected pilot from the board table."""
@@ -1590,8 +1732,16 @@ class PriFlyCommander(App):
 
         Called every frame (3s) from _refresh_ui.
         """
+        # SDK-managed agents handle their own status via event stream
+        sdk_callsigns = {a.callsign for a in self._sdk_mgr.active_agents()} if self._sdk_mgr else set()
+
         for pilot in self._roster.all_pilots():
             cs = pilot.callsign
+
+            # Skip SDK agents — their event handler manages status
+            if cs in sdk_callsigns:
+                continue
+
             curr = pilot.tokens_used
             prev = self._reconciler.prev_tokens.get(cs, 0)
             delta = curr - prev
@@ -1609,10 +1759,33 @@ class PriFlyCommander(App):
                 self._reconciler.stale_frames.pop(cs, None)
                 continue
 
+            # AAR agents can still flame out — check fuel before skipping
+            if pilot.status == "AAR" and pilot.fuel_pct <= 0:
+                pilot.status = "SAR"
+                _play_sound("mayday")
+                self._add_radio(cs, "FLAMEOUT — AAR failed, ZERO FUEL", "error")
+                _notify("USS TENKARA — MAYDAY", f"{cs} flameout during AAR")
+                # Don't skip — let SAR animation start on next compaction recovery tick
+
             # Skip terminal/special statuses — don't interfere with AAR/SAR/RECOVERED/MAYDAY
             if pilot.status in ("AAR", "SAR", "RECOVERED", "MAYDAY"):
                 self._reconciler.stale_frames.pop(cs, None)
                 continue
+
+            # AIRBORNE agents — check fuel for SAR trigger
+            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 0:
+                pilot.status = "SAR"
+                _play_sound("mayday")
+                self._add_radio(cs, "FLAMEOUT — ZERO FUEL", "error")
+                _notify("USS TENKARA — MAYDAY", f"{cs} flameout")
+                self._reconciler.stale_frames.pop(cs, None)
+                continue
+
+            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 30 and cs not in self._reconciler.bingo_notified:
+                self._reconciler.bingo_notified.add(cs)
+                _play_sound("bingo")
+                self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
+                _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
 
             if delta > 0:
                 # Tokens moving — reset stale counter
@@ -1663,8 +1836,13 @@ class PriFlyCommander(App):
         """
         now = time_mod.time()
 
+        # SDK-managed agents handle their own status via event stream
+        sdk_callsigns = {a.callsign for a in self._sdk_mgr.active_agents()} if self._sdk_mgr else set()
+
         for pilot in self._roster.all_pilots():
             cs = pilot.callsign
+            if cs in sdk_callsigns:
+                continue
             curr_fuel = pilot.fuel_pct
             prev_fuel = self._reconciler.prev_fuel.get(cs, curr_fuel)
             self._reconciler.prev_fuel[cs] = curr_fuel

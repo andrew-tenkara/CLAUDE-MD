@@ -126,6 +126,62 @@ def _derive_legacy_status(agent) -> str:
 
 # ── Status transition events ─────────────────────────────────────────
 
+# ── Valid status transitions ──────────────────────────────────────────
+
+# Maps each status to the set of statuses it can transition to.
+# Prevents illogical jumps (e.g., AIRBORNE → RECOVERED without ON_APPROACH).
+VALID_TRANSITIONS: dict[str, set[str]] = {
+    "IDLE":         {"PREFLIGHT", "AIRBORNE", "RECOVERED", "MAYDAY"},
+    "PREFLIGHT":    {"AIRBORNE", "IDLE", "MAYDAY"},
+    "AIRBORNE":     {"ON_APPROACH", "AAR", "SAR", "MAYDAY"},
+    "ON_APPROACH":  {"RECOVERED", "AIRBORNE", "MAYDAY"},  # AIRBORNE = wave off
+    "RECOVERED":    {"IDLE", "MAYDAY"},  # IDLE = rearm/resume
+    "MAYDAY":       {"RECOVERED", "IDLE", "SAR"},
+    "AAR":          {"AIRBORNE", "MAYDAY"},
+    "SAR":          {"AIRBORNE", "MAYDAY"},
+}
+
+# When a transition is invalid, this maps to an intermediate status to pass through.
+# e.g., AIRBORNE → RECOVERED should go through ON_APPROACH first.
+TRANSITION_INTERMEDIATES: dict[tuple[str, str], str] = {
+    ("AIRBORNE", "RECOVERED"): "ON_APPROACH",
+    ("AAR", "RECOVERED"): "AIRBORNE",       # AAR → AIRBORNE → ON_APPROACH → RECOVERED
+    ("SAR", "RECOVERED"): "AIRBORNE",       # SAR → AIRBORNE → ON_APPROACH → RECOVERED
+    ("IDLE", "ON_APPROACH"): "AIRBORNE",
+    ("IDLE", "AAR"): "AIRBORNE",
+    ("IDLE", "SAR"): "AIRBORNE",
+    ("PREFLIGHT", "ON_APPROACH"): "AIRBORNE",
+    ("PREFLIGHT", "RECOVERED"): "AIRBORNE",
+}
+
+
+def validate_transition(current: str, proposed: str) -> str:
+    """Validate a status transition and return the actual next status.
+
+    If the proposed transition is valid, returns proposed.
+    If invalid but has an intermediate, returns the intermediate.
+    If invalid with no intermediate, returns proposed anyway (permissive).
+    """
+    current = current.upper()
+    proposed = proposed.upper()
+
+    if current == proposed:
+        return proposed
+
+    valid = VALID_TRANSITIONS.get(current, set())
+    if proposed in valid:
+        return proposed
+
+    # Check for intermediate
+    intermediate = TRANSITION_INTERMEDIATES.get((current, proposed))
+    if intermediate:
+        return intermediate
+
+    # Permissive fallback — allow it but log
+    log.debug("Unusual transition: %s → %s (no intermediate defined)", current, proposed)
+    return proposed
+
+
 @dataclass
 class StatusTransition:
     """Describes a status change event for a pilot."""
@@ -159,7 +215,7 @@ class StatusReconciler:
         self.bingo_notified: set[str] = set()
         self.stale_threshold = stale_threshold
 
-    def check_token_deltas(self, pilots, add_radio) -> list[StatusTransition]:
+    def check_token_deltas(self, pilots, add_radio, exclude_callsigns: set | None = None) -> list[StatusTransition]:
         """Compare each pilot's token count to the previous frame.
 
         - delta > 0  → tokens flowing, ensure AIRBORNE
@@ -167,11 +223,15 @@ class StatusReconciler:
                         stale frames on an AIRBORNE pilot → ON_APPROACH
         - Newly IDLE pilots with first token activity → promote to AIRBORNE
 
+        exclude_callsigns: SDK-managed agents — their event stream handles status.
         Returns transition events. Caller applies sounds/notifications.
         """
         transitions = []
+        _exclude = exclude_callsigns or set()
 
         for pilot in pilots:
+            if pilot.callsign in _exclude:
+                continue
             cs = pilot.callsign
             curr = pilot.tokens_used
             prev = self.prev_tokens.get(cs, 0)
@@ -242,19 +302,25 @@ class StatusReconciler:
 
         return transitions
 
-    def check_compaction_recovery(self, pilots, add_radio) -> list[StatusTransition]:
+    def check_compaction_recovery(self, pilots, add_radio, exclude_callsigns: set | None = None) -> list[StatusTransition]:
         """Detect context compaction events via fuel jumps.
 
         When Claude auto-compacts, fuel_pct jumps up (e.g. 5% → 60%).
         This triggers the recovery flow:
           - SAR (was 0% / crashed) → flameout → helo → replane → relaunch
           - AAR (voluntary compact) → refuel → disconnect → resume AIRBORNE
+
+        exclude_callsigns: SDK-managed agents — their event stream handles status.
         """
         transitions = []
         now = time_mod.time()
 
+        _exclude = exclude_callsigns or set()
+
         for pilot in pilots:
             cs = pilot.callsign
+            if cs in _exclude:
+                continue
             curr_fuel = pilot.fuel_pct
             prev_fuel = self.prev_fuel.get(cs, curr_fuel)
             self.prev_fuel[cs] = curr_fuel
