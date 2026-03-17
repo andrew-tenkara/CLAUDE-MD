@@ -1339,6 +1339,11 @@ class PriFlyCommander(App):
                 self._agent_mgr.wave_off(pilot.callsign)
             except Exception:
                 pass
+            try:
+                if self._sdk_mgr:
+                    self._sdk_mgr.wave_off(pilot.callsign)
+            except Exception:
+                pass
         callsign = pilot.callsign
         tid = pilot.ticket_id
         project_dir = self._project_dir
@@ -1349,6 +1354,15 @@ class PriFlyCommander(App):
         self._dismissed_tickets.add(tid)  # prevent re-add by _sync_legacy_agents
         self._board_state_sig = ""  # force table rebuild
         self._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
+
+        # Remove sprite immediately — don't wait for tombstone TTL
+        try:
+            strip = self.query_one("#flight-strip", FlightOpsStrip)
+            if callsign in strip._sprites:
+                del strip._sprites[callsign]
+        except Exception:
+            pass
+
         self._refresh_ui()
 
         if not worktree_path:
@@ -1356,8 +1370,19 @@ class PriFlyCommander(App):
 
         def _delete_worktree():
             try:
+                wt_path = Path(worktree_path)
+                if not wt_path.exists():
+                    try:
+                        self.call_from_thread(
+                            self._add_radio, "PRI-FLY",
+                            f"{callsign} worktree already gone", "system",
+                        )
+                    except Exception:
+                        pass
+                    return
+
                 result = subprocess.run(
-                    ["git", "worktree", "remove", "--force", worktree_path],
+                    ["git", "worktree", "remove", "--force", str(wt_path)],
                     cwd=project_dir,
                     capture_output=True, text=True, timeout=30,
                 )
@@ -1370,13 +1395,30 @@ class PriFlyCommander(App):
                     except Exception:
                         pass
                 else:
-                    # Not a registered worktree (or git failed) — nuke the dir directly
-                    log.warning("git worktree remove failed for %s: %s", worktree_path, result.stderr.strip())
-                    shutil.rmtree(worktree_path, ignore_errors=True)
+                    # git worktree remove failed — try direct delete
+                    err = result.stderr.strip()
+                    try:
+                        self.call_from_thread(
+                            self._add_radio, "PRI-FLY",
+                            f"{callsign} git remove failed ({err[:80]}), nuking dir", "system",
+                        )
+                    except Exception:
+                        pass
+                    shutil.rmtree(str(wt_path), ignore_errors=True)
                     try:
                         self.call_from_thread(
                             self._add_radio, "PRI-FLY",
                             f"{callsign} worktree directory deleted", "success",
+                        )
+                    except Exception:
+                        pass
+
+                # Verify deletion
+                if wt_path.exists():
+                    try:
+                        self.call_from_thread(
+                            self._add_radio, "PRI-FLY",
+                            f"WARNING: {callsign} worktree still exists at {wt_path}", "error",
                         )
                     except Exception:
                         pass
@@ -2129,12 +2171,20 @@ class PriFlyCommander(App):
             # Mission
             mission = Text()
             mission.append(f"{pilot.ticket_id}", style="bold")
-            if pilot.mission_title and pilot.mission_title != pilot.ticket_id:
-                mission.append(f"\n{pilot.mission_title[:50]}", style="grey70")
+            # Show title if different from ticket ID, truncated
+            title = pilot.mission_title
+            if title and title != pilot.ticket_id and title not in ("Unknown", "unknown"):
+                # Clean up title — strip ticket ID prefix if present
+                clean_title = title.replace(f"[{pilot.ticket_id}] ", "").replace(f"{pilot.ticket_id}: ", "")
+                if clean_title:
+                    mission.append(f"\n{clean_title[:45]}", style="grey70")
             if pilot.flight_phase:
-                mission.append(f"\n» {pilot.flight_phase}", style="italic cyan")
+                mission.append(f"\n» {pilot.flight_phase[:40]}", style="italic cyan")
             if pilot.status_hint:
-                mission.append(f"\n⚡ {pilot.status_hint}", style="bold cyan")
+                # Only show server URLs, not full paths
+                hint = pilot.status_hint
+                if "localhost:" in hint or "127.0.0.1:" in hint:
+                    mission.append(f"\n⚡ {hint}", style="bold cyan")
 
             table.add_row(
                 cs,
