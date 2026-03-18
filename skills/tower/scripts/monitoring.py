@@ -116,6 +116,29 @@ class Monitoring:
                 label = url if not note else f"{url} ({note})"
                 server_map[tid] = label
 
+        # Also read per-worktree server-ports.json (written by agents)
+        for pilot in ctx._roster.all_pilots():
+            if pilot.worktree_path:
+                wt = pilot.worktree_path
+                if not Path(wt).is_absolute():
+                    wt = str(Path(ctx._project_dir) / wt)
+                ports_file = Path(wt) / ".sortie" / "server-ports.json"
+                try:
+                    if ports_file.exists():
+                        ports = json.loads(ports_file.read_text(encoding="utf-8"))
+                        for name, port in ports.items():
+                            if name == "timestamp":
+                                continue
+                            label = f"localhost:{port}"
+                            if label not in server_map.get(pilot.ticket_id, ""):
+                                server_map.setdefault(pilot.ticket_id, "")
+                                if server_map[pilot.ticket_id]:
+                                    server_map[pilot.ticket_id] += f" | {label} ({name})"
+                                else:
+                                    server_map[pilot.ticket_id] = f"{label} ({name})"
+                except (OSError, json.JSONDecodeError):
+                    pass
+
         # Apply to pilots — append to existing hint, don't clobber
         for pilot in ctx._roster.all_pilots():
             server_label = server_map.get(pilot.ticket_id)

@@ -138,6 +138,12 @@ class ItermBridge:
             "Write HOLDING when you are waiting/blocked/idle.\n"
             "NEVER write RECOVERED — that is set automatically when your session ends.\n"
             "When your mission is complete, write HOLDING with phase 'mission complete — awaiting orders'.\n"
+            "\n"
+            "## Server Port Protocol\n"
+            "If you start any dev server, worker, or dashboard process, write the port to `.sortie/server-ports.json`:\n"
+            '```json\n{"dev": 3001, "bullboard": 4502, "timestamp": 1710345600}\n```\n'
+            "Include any port your worktree is serving on. The TUI reads this to show server URLs on the board "
+            "and the O key opens them in the browser. Update the file whenever a new server starts or a port changes.\n"
         )
         (sortie_dir / "directive.md").write_text(pilot.directive + flight_protocol)
 
