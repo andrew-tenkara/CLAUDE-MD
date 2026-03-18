@@ -275,6 +275,7 @@ class PriFlyCommander(App):
         Binding("d", "open_comms", "Open Pane", priority=True, show=False),
         Binding("f", "toggle_flight_strip", "Flight", priority=True, show=False),
         Binding("l", "linear_browse", "Linear", priority=True, show=False),
+        Binding("b", "open_bullboard", "BullBoard", priority=True, show=False),
         Binding("o", "open_browser", "Browser", priority=True, show=False),
         Binding("p", "open_pr", "PR", priority=True, show=False),
         Binding("r", "resume_selected", "Resume", priority=True, show=False),
@@ -1577,6 +1578,33 @@ class PriFlyCommander(App):
         """Request sitrep from all airborne agents."""
         self._dispatcher.cmd_sitrep()
 
+    def action_open_bullboard(self) -> None:
+        """Open the BullBoard dashboard for the selected pilot."""
+        pilot = self._get_selected_pilot()
+        if not pilot:
+            self._add_radio("PRI-FLY", "No pilot selected", "error")
+            return
+        if not pilot.worktree_path:
+            self._add_radio("PRI-FLY", f"{pilot.callsign} has no worktree", "error")
+            return
+        wt = pilot.worktree_path
+        if not Path(wt).is_absolute():
+            wt = str(Path(self._project_dir) / wt)
+        ports_file = Path(wt) / ".sortie" / "server-ports.json"
+        try:
+            if ports_file.exists():
+                ports = json.loads(ports_file.read_text(encoding="utf-8"))
+                bb_port = ports.get("bullboard")
+                if bb_port:
+                    url = f"http://localhost:{bb_port}"
+                    subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self._add_radio("PRI-FLY", f"Opening BullBoard at {url}", "system")
+                    return
+        except (OSError, json.JSONDecodeError):
+            pass
+        # Fallback: try default port
+        self._add_radio("PRI-FLY", f"{pilot.callsign} has no BullBoard port in .sortie/server-ports.json", "error")
+
     def action_open_browser(self) -> None:
         """Open the dev server URL for the selected pilot in the browser."""
         pilot = self._get_selected_pilot()
@@ -2222,6 +2250,7 @@ class PriFlyCommander(App):
                     _key("V", "Server")
                     if has_server:
                         _key("O", "Browser")
+                    _key("B", "BullBoard")
                 if has_worktree:
                     _key("P", "PR")
                 _sep()
