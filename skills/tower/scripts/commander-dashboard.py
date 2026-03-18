@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 from agent_manager import AgentManager, AgentProcess, StreamEvent
 from sdk_bridge import SdkAgentManager, SdkAgent, AgentEvent, sdk_available
+from inline_sentinel import InlineSentinel
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
 from mission_queue import Mission, MissionQueue
 from linear_bridge import (
@@ -325,6 +326,13 @@ class PriFlyCommander(App):
         self._rtk_active: bool = False
         self._sentinel_pid: Optional[int] = None
 
+        # Inline sentinel — runs classification in-process instead of subprocess
+        self._inline_sentinel = InlineSentinel(
+            project_dir=self._project_dir,
+            on_status_change=self._on_sentinel_status_change,
+        )
+        self._use_inline_sentinel = True  # toggle to use subprocess sentinel instead
+
         # Status reconciler — token deltas, fuel jumps, multi-source priority
         self._reconciler = StatusReconciler(stale_threshold=4)
 
@@ -430,12 +438,13 @@ class PriFlyCommander(App):
         # Runs I/O in background to keep the main thread free
         self.set_interval(5.0, self._sync_legacy_agents)
 
-        # Launch sentinel — headless JSONL classifier (Haiku) that writes
-        # sentinel-status.json to each worktree so agents don't self-report
-        self._start_sentinel()
-
-        # Watchdog: re-launch sentinel if it dies (runs every 15s inside _refresh_ui cycle)
-        self.set_interval(15.0, self._check_sentinel_health)
+        # Launch sentinel — either inline (in-process) or subprocess
+        if self._use_inline_sentinel:
+            self._inline_sentinel.start()
+            self._add_radio("PRI-FLY", "SENTINEL — inline classifier online", "system")
+        else:
+            self._start_sentinel()
+            self.set_interval(15.0, self._check_sentinel_health)
 
         # Focus the board table
         self.query_one("#agent-table", DataTable).focus()
@@ -473,7 +482,14 @@ class PriFlyCommander(App):
         except Exception as e:
             log.warning("Observer cleanup error: %s", e)
 
-        # Kill sentinel process if we spawned one
+        # Stop inline sentinel
+        try:
+            if self._inline_sentinel and self._inline_sentinel.is_alive:
+                self._inline_sentinel.stop()
+        except Exception:
+            pass
+
+        # Kill sentinel subprocess if we spawned one
         try:
             if self._sentinel_pid:
                 os.kill(self._sentinel_pid, 15)  # SIGTERM
@@ -618,6 +634,10 @@ class PriFlyCommander(App):
             # Sync worktree path from legacy state
             if agent.worktree_path and not pilot.worktree_path:
                 pilot.worktree_path = agent.worktree_path
+
+            # Register with inline sentinel for JSONL classification
+            if self._use_inline_sentinel and agent.worktree_path:
+                self._inline_sentinel.add_worktree(tid, agent.worktree_path)
 
             # Sync telemetry from legacy state
             # Truly unknown agents (no directive at all) — always RECOVERED
@@ -802,6 +822,16 @@ class PriFlyCommander(App):
             pass
 
     # ── SDK agent event callbacks ─────────────────────────────────────
+
+    def _on_sentinel_status_change(self, ticket_id: str, old_status: str, new_status: str, phase: str) -> None:
+        """Called from inline sentinel thread when an agent's status changes."""
+        try:
+            self.call_from_thread(
+                self._add_radio, "SENTINEL",
+                f"{ticket_id}: {old_status} → {new_status} ({phase})", "system",
+            )
+        except Exception:
+            pass
 
     def _on_sdk_agent_event(self, callsign: str, event: "AgentEvent") -> None:
         """Called from SDK agent thread — must use call_from_thread."""
