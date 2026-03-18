@@ -1923,10 +1923,17 @@ class PriFlyCommander(App):
                 self._reconciler.stale_frames[cs] = 0
 
                 if pilot.status == "IDLE":
-                    # First token flow → launch
-                    pilot.status = "AIRBORNE"
-                    self._add_radio(cs, "LAUNCH — tokens flowing, going AIRBORNE", "success")
-                    _notify("USS TENKARA — LAUNCH", f"{cs} AIRBORNE")
+                    # Skip if this is the first time we're seeing this pilot's tokens —
+                    # the delta may be from historical JSONL, not live activity.
+                    # Only launch on the SECOND consecutive positive delta.
+                    if prev == 0 and curr > 0:
+                        # First observation — set baseline, don't launch yet
+                        pass
+                    else:
+                        # Genuine token flow on a pilot we've been tracking
+                        pilot.status = "AIRBORNE"
+                        self._add_radio(cs, "LAUNCH — tokens flowing, going AIRBORNE", "success")
+                        _notify("USS TENKARA — LAUNCH", f"{cs} AIRBORNE")
                 elif pilot.status == "ON_APPROACH":
                     # Was flying home but tokens resumed — wave off, back to AIRBORNE
                     pilot.status = "AIRBORNE"
