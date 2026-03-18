@@ -25,6 +25,7 @@ from agent_manager import AgentManager, AgentProcess, StreamEvent
 from sdk_bridge import SdkAgentManager, SdkAgent, AgentEvent, sdk_available
 from inline_sentinel import InlineSentinel
 from squadron_analyst import SquadronAnalyst
+from status_observer import derive_status, narrate_transition
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
 from mission_queue import Mission, MissionQueue
 from linear_bridge import (
@@ -1902,191 +1903,18 @@ class PriFlyCommander(App):
     def _check_idle_agents(self) -> None:
         self._monitoring.check_idle_agents()
 
-    # ── Token delta tracking ─────────────────────────────────────────
+    # ── Fuel alerts (status is set by derive_status in _refresh_ui) ──
 
-    def _check_token_deltas(self) -> None:
-        """Compare each pilot's token count to the previous frame.
-
-        - delta > 0  → tokens flowing, ensure AIRBORNE
-        - delta == 0 → stale frame; after _stale_threshold consecutive
-                        stale frames on an AIRBORNE pilot → ON_APPROACH
-        - Newly IDLE pilots with first token activity → promote to AIRBORNE
-
-        Called every frame (3s) from _refresh_ui.
-        """
-        # SDK-managed agents handle their own status via event stream
-        sdk_callsigns = {a.callsign for a in self._sdk_mgr.active_agents()} if self._sdk_mgr else set()
-
+    def _check_fuel_alerts(self) -> None:
+        """Check fuel levels and emit bingo warnings. Does NOT set status."""
         for pilot in self._roster.all_pilots():
-            cs = pilot.callsign
-
-            # Skip SDK agents — their event handler manages status
-            if cs in sdk_callsigns:
-                continue
-
-            curr = pilot.tokens_used
-            prev = self._reconciler.prev_tokens.get(cs, 0)
-            delta = curr - prev
-            self._reconciler.prev_tokens[cs] = curr
-
-            # Agent-reported flight status is authoritative — skip token-delta inference
-            if pilot.flight_status:
-                self._reconciler.stale_frames.pop(cs, None)
-                continue
-
-            # Unknown agents (no real directive) — pin to RECOVERED, never promote
-            if pilot.mission_title in ("Unknown", "unknown") and pilot.ticket_id in ("Unknown", "unknown"):
-                if pilot.status != "RECOVERED":
-                    pilot.status = "RECOVERED"
-                self._reconciler.stale_frames.pop(cs, None)
-                continue
-
-            # AAR agents can still flame out — check fuel before skipping
-            if pilot.status == "AAR" and pilot.fuel_pct <= 0:
-                pilot.status = "SAR"
-                _play_sound("mayday")
-                self._add_radio(cs, "FLAMEOUT — AAR failed, ZERO FUEL", "error")
-                _notify("USS TENKARA — MAYDAY", f"{cs} flameout during AAR")
-                # Don't skip — let SAR animation start on next compaction recovery tick
-
-            # Skip terminal/special statuses — don't interfere with AAR/SAR/RECOVERED/MAYDAY
-            if pilot.status in ("AAR", "SAR", "RECOVERED", "MAYDAY"):
-                self._reconciler.stale_frames.pop(cs, None)
-                continue
-
-            # AIRBORNE agents — check fuel for SAR trigger
-            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 0:
-                pilot.status = "SAR"
-                _play_sound("mayday")
-                self._add_radio(cs, "FLAMEOUT — ZERO FUEL", "error")
-                _notify("USS TENKARA — MAYDAY", f"{cs} flameout")
-                self._reconciler.stale_frames.pop(cs, None)
-                continue
-
-            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 30 and cs not in self._reconciler.bingo_notified:
-                self._reconciler.bingo_notified.add(cs)
-                _play_sound("bingo")
-                self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
-                _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
-
-            if delta > 0:
-                # Tokens moving — reset stale counter
-                self._reconciler.stale_frames[cs] = 0
-
-                if pilot.status == "IDLE":
-                    # Skip if this is the first time we're seeing this pilot's tokens —
-                    # the delta may be from historical JSONL, not live activity.
-                    # Only launch on the SECOND consecutive positive delta.
-                    if prev == 0 and curr > 0:
-                        # First observation — set baseline, don't launch yet
-                        pass
-                    else:
-                        # Genuine token flow on a pilot we've been tracking
-                        pilot.status = "AIRBORNE"
-                        self._add_radio(cs, "LAUNCH — tokens flowing, going AIRBORNE", "success")
-                        _notify("USS TENKARA — LAUNCH", f"{cs} AIRBORNE")
-                elif pilot.status == "ON_APPROACH":
-                    # Was flying home but tokens resumed — wave off, back to AIRBORNE
-                    pilot.status = "AIRBORNE"
-                    self._add_radio(cs, "WAVE OFF RTB — tokens resumed, back AIRBORNE", "success")
-
-            elif curr > 0:
-                # Had tokens before, but no new ones this frame
-                stale = self._reconciler.stale_frames.get(cs, 0) + 1
-                self._reconciler.stale_frames[cs] = stale
-
-                if pilot.status == "AIRBORNE" and stale >= self._reconciler.stale_threshold:
-                    pilot.status = "ON_APPROACH"
-                    self._add_radio(cs, "ON APPROACH — token flow stopped, RTB", "system")
-                elif pilot.status == "ON_APPROACH" and stale >= self._reconciler.stale_threshold + 6:
-                    # Landing animation done (~18s after ON_APPROACH) → park it
-                    pilot.status = "RECOVERED"
-                    self._add_radio(cs, "RECOVERED — on deck, mission complete", "success")
-                    _play_sound("recovered")
-                    _notify("USS TENKARA — RECOVERED", f"{cs} on deck")
-                    _clear_flight_status(pilot.worktree_path)
-
-        # Clean up entries for removed pilots
-        active_cs = {p.callsign for p in self._roster.all_pilots()}
-        for cs in list(self._reconciler.prev_tokens):
-            if cs not in active_cs:
-                del self._reconciler.prev_tokens[cs]
-                self._reconciler.stale_frames.pop(cs, None)
-
-    # ── Compaction recovery (AAR / SAR) ─────────────────────────────
-
-    def _check_compaction_recovery(self) -> None:
-        """Detect context compaction events via fuel jumps.
-
-        When Claude auto-compacts, fuel_pct jumps up (e.g. 5% → 60%).
-        This triggers the recovery flow:
-          - SAR (was 0% / crashed) → flameout → helo → replane → relaunch
-          - AAR (voluntary compact) → refuel → disconnect → resume AIRBORNE
-        """
-        now = time_mod.time()
-
-        # SDK-managed agents handle their own status via event stream
-        sdk_callsigns = {a.callsign for a in self._sdk_mgr.active_agents()} if self._sdk_mgr else set()
-
-        for pilot in self._roster.all_pilots():
-            cs = pilot.callsign
-            if cs in sdk_callsigns:
-                continue
-            curr_fuel = pilot.fuel_pct
-            prev_fuel = self._reconciler.prev_fuel.get(cs, curr_fuel)
-            self._reconciler.prev_fuel[cs] = curr_fuel
-            fuel_gain = curr_fuel - prev_fuel
-
-            # ── SAR recovery: was crashed, fuel came back ──
-            if pilot.status == "SAR":
-                if cs not in self._reconciler.sar_started:
-                    # First frame at SAR — start the crash timer
-                    self._reconciler.sar_started[cs] = now
-                    self._add_radio(cs, "FLAMEOUT — ejecting! Pedro helo launching...", "error")
-                    continue
-
-                elapsed = now - self._reconciler.sar_started[cs]
-
-                if fuel_gain >= _FUEL_JUMP_THRESHOLD and elapsed >= _SAR_RECOVERY_DELAY:
-                    # Fuel recovered + enough time for crash animation → replane and relaunch
-                    del self._reconciler.sar_started[cs]
-                    pilot.status = "AIRBORNE"
-                    self._reconciler.bingo_notified.discard(cs)
-                    self._reconciler.stale_frames.pop(cs, None)
-                    self._add_radio(cs, f"SAR COMPLETE — Pedro has the pilot. Replaned, back AIRBORNE at {curr_fuel}%", "success")
-                    _notify("USS TENKARA — SAR", f"{cs} recovered, replaned, AIRBORNE")
-                elif fuel_gain >= _FUEL_JUMP_THRESHOLD:
-                    # Fuel came back but still in animation window
-                    self._add_radio(cs, "Pedro on station — winching pilot aboard...", "system")
-                elif elapsed > _SAR_RECOVERY_DELAY and curr_fuel > 0:
-                    # Enough time passed and fuel is non-zero → recover
-                    self._reconciler.sar_started.pop(cs, None)
-                    pilot.status = "AIRBORNE"
-                    self._reconciler.bingo_notified.discard(cs)
-                    self._reconciler.stale_frames.pop(cs, None)
-                    self._add_radio(cs, f"SAR COMPLETE — replaned, back AIRBORNE at {curr_fuel}%", "success")
-                    _notify("USS TENKARA — SAR", f"{cs} recovered, AIRBORNE")
-                continue
-
-            # ── AAR recovery: was refueling, fuel came back ──
-            if pilot.status == "AAR":
-                if fuel_gain >= _FUEL_JUMP_THRESHOLD:
-                    # Compaction complete — disconnect from tanker, back to AIRBORNE
-                    pilot.status = "AIRBORNE"
-                    self._reconciler.bingo_notified.discard(cs)
-                    self._reconciler.stale_frames.pop(cs, None)
-                    self._add_radio(cs, f"AAR COMPLETE — disconnect, back AIRBORNE at {curr_fuel}%", "success")
-                    _notify("USS TENKARA — AAR", f"{cs} refueled, AIRBORNE")
-                continue
-
-        # Clean up stale SAR entries for removed pilots
-        active_cs = {p.callsign for p in self._roster.all_pilots()}
-        for cs in list(self._reconciler.sar_started):
-            if cs not in active_cs:
-                del self._reconciler.sar_started[cs]
-        for cs in list(self._reconciler.prev_fuel):
-            if cs not in active_cs:
-                del self._reconciler.prev_fuel[cs]
+            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 30:
+                cs = pilot.callsign
+                if cs not in self._reconciler.bingo_notified:
+                    self._reconciler.bingo_notified.add(cs)
+                    _play_sound("bingo")
+                    self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
+                    _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
 
     # ── UI refresh ───────────────────────────────────────────────────
 
@@ -2104,15 +1932,46 @@ class PriFlyCommander(App):
         except Exception:
             pass
 
-        # Token delta check — must run before table render so status is current
+        # ── Status observation — single source of truth ──
+        # derive_status() reads evidence (JSONL age, session-ended, command.json)
+        # and returns the status. Nothing else writes pilot.status for legacy agents.
         try:
-            self._check_token_deltas()
-        except Exception:
-            pass
+            for pilot in self._roster.all_pilots():
+                # Skip SDK-managed agents — their event stream handles status
+                if self._is_sdk_agent(pilot.callsign):
+                    continue
+                # Skip if no worktree (can't observe)
+                if not pilot.worktree_path:
+                    continue
+                wt = pilot.worktree_path
+                if not Path(wt).is_absolute():
+                    wt = str(Path(self._project_dir) / wt)
 
-        # Compaction recovery — detect fuel jumps on SAR/AAR agents
+                old_status = pilot.status
+                new_status = derive_status(wt, current_status=old_status)
+
+                if new_status != old_status:
+                    pilot.status = new_status
+                    self._add_radio(pilot.callsign, f"{old_status} → {new_status}", "system")
+
+                    # Haiku narrator — explain the transition (async, non-blocking)
+                    import threading
+                    def _narrate(cs=pilot.callsign, old=old_status, new=new_status, w=wt):
+                        narrative = narrate_transition(cs, old, new, w)
+                        if narrative:
+                            try:
+                                self.call_from_thread(
+                                    self._add_radio, "ANALYST", f"{cs}: {narrative}", "system",
+                                )
+                            except Exception:
+                                pass
+                    threading.Thread(target=_narrate, daemon=True).start()
+        except Exception as e:
+            log.warning("Status observation error: %s", e)
+
+        # Fuel alerts only — status is set by derive_status() above
         try:
-            self._check_compaction_recovery()
+            self._check_fuel_alerts()
         except Exception:
             pass
 
