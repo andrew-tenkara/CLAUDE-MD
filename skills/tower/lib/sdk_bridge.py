@@ -122,10 +122,18 @@ class SdkAgent:
     def fuel_pct(self) -> int:
         """Estimate fuel from token usage. Rough heuristic until we get real context usage."""
         # Assume ~200k context window, tokens_in is cumulative
-        if self.total_tokens_in == 0:
-            return 100
-        used_pct = min(100, int(self.total_tokens_in / 200_000 * 100))
-        return max(0, 100 - used_pct)
+        # Prefer token-based estimate, fall back to cost-based.
+        # Note: SDK v0.1.49 doesn't expose per-message token counts (usage is None).
+        # Cost only updates at session end via ResultMessage. During active sessions,
+        # fuel stays at 100% — this is a known SDK limitation.
+        if self.total_tokens_in > 0:
+            used_pct = min(100, int(self.total_tokens_in / 200_000 * 100))
+            return max(0, 100 - used_pct)
+        if self.total_cost_usd > 0:
+            # Rough cost-based estimate: $0.20 ≈ full context for sonnet
+            used_pct = min(100, int(self.total_cost_usd / 0.20 * 100))
+            return max(0, 100 - used_pct)
+        return 100
 
     def _init_jsonl(self) -> None:
         """Set up JSONL tee file mirroring Claude CLI's path structure."""
