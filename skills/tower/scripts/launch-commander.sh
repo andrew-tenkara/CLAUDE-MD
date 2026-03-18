@@ -53,19 +53,25 @@ RESULT=$(osascript <<EOF
 tell application "iTerm2"
   activate
 
-  -- Window 1: TUI
-  create window with default profile
-  tell current session of current tab of current window
+  -- Window 1: TUI — capture the window and session explicitly
+  set tuiWindow to (create window with default profile)
+  set tuiSess to current session of current tab of tuiWindow
+  tell tuiSess
     set name to "USS Tenkara PRI-FLY"
-    write text "${CMD}"
   end tell
 
-  -- Window 2: Pit Boss (agents will be paned in here)
+  -- Window 2: Pit Boss
   set pitBossWindow to (create window with default profile)
   set pitBossSess to current session of current tab of pitBossWindow
   tell pitBossSess
     set name to "PIT BOSS"
     write text "echo '⚓ USS TENKARA — PIT BOSS'; echo 'Mini Boss + agent panes will appear here.'; echo ''"
+  end tell
+
+  -- Small delay to ensure sessions are ready, then write TUI command
+  delay 0.3
+  tell tuiSess
+    write text "${CMD}"
   end tell
 
   return (id of pitBossWindow as text) & "," & (unique id of pitBossSess)
