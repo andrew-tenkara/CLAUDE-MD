@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 class _WorktreeFileHandler(FileSystemEventHandler):
     """Debounced file watcher for sortie worktree state changes."""
-    DEBOUNCE_SECONDS = 0.5
+    DEBOUNCE_SECONDS = 0.2
 
     def __init__(self, app) -> None:
         super().__init__()

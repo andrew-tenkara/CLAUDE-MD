@@ -817,18 +817,34 @@ class FlightOpsStrip(Static):
                 if 0 <= pos < sw:
                     row_upper[pos] = ch
 
+        # ── Deck condensing: when many sprites are parked/idle, show a count
+        # badge instead of individual sprites to prevent visual overflow.
+        DECK_CONDENSE_THRESHOLD = 4  # condense when more than this many on deck
+        deck_phases = {"DECK_PARK", "TAXI_BACK", "DECK_IDLE"}
+        deck_sprites = [s for s in self._sprites.values() if s.phase in deck_phases]
+        condense_deck = len(deck_sprites) > DECK_CONDENSE_THRESHOLD
+        condensed_count = len(deck_sprites) if condense_deck else 0
+
         # Collect main sprite overlay data: (col, lane, text, style, callsign)
         sprite_overlays: list[tuple[int, int, str, str, str]] = []
         for sprite in self._sprites.values():
             # Only render jet sprite when not in eject/pickup/helo phases
-            # (the jet is "gone" during SAR_EJECT → SAR_HELO_RTB)
             hide_jet = sprite.phase in (
                 "SAR_EJECT", "SAR_HELO_OUT", "SAR_PICKUP", "SAR_HELO_RTB"
             )
+            # Skip individual deck sprites when condensed
+            if condense_deck and sprite.phase in deck_phases:
+                continue
             if not hide_jet:
                 txt   = self._get_sprite_text(sprite)
                 style = self._get_sprite_style(sprite)
                 sprite_overlays.append((sprite.col, sprite.lane, txt, style, sprite.pilot_id))
+
+        # Add deck count badge when condensed
+        if condense_deck and condensed_count > 0:
+            badge = f"[{condensed_count} ON DECK]"
+            badge_col = self._zone_col("PARK", 0.3)
+            sprite_overlays.append((badge_col, 0, badge, "bold grey70", "__deck_badge__"))
 
         # Collect aux overlays: (col, text, style)
         aux_overlays: list[tuple[int, str, str]] = []
@@ -889,6 +905,8 @@ class FlightOpsStrip(Static):
         occupied: list[list[tuple[int, int]]] = [[] for _ in range(MAX_LABEL_ROWS)]
 
         for col, _lane, txt, _style, callsign in sprite_overlays:
+            if callsign == "__deck_badge__":
+                continue  # Badge has no label
             sprite = self._sprites.get(callsign)
             is_parked = sprite and sprite.phase in ("DECK_PARK", "TAXI_BACK")
             label = (sprite.ticket_id if sprite and sprite.ticket_id else callsign)

@@ -412,7 +412,7 @@ class PriFlyCommander(App):
         # Animation timers
         self.set_interval(1.0, self._toggle_bingo)
         self.set_interval(2.0, self._toggle_condition)
-        self.set_interval(3.0, self._refresh_ui)
+        self.set_interval(2.0, self._refresh_ui)
         self.set_interval(10.0, self._check_idle_agents)
 
         # Init Air Boss header + spawn immediately (claims first Pit Boss pane)
@@ -2101,8 +2101,7 @@ class PriFlyCommander(App):
                     _key("K", "Compact", "bold cyan")
                 if status not in ("RECOVERED",):
                     _key("W", "Wave-off", "bold red")
-                if status in ("RECOVERED", "MAYDAY"):
-                    _key("Z", "Dismiss")
+                _key("Z", "Dismiss")
 
         hotkey.update(t)
 
