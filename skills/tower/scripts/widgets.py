@@ -14,8 +14,9 @@ from typing import Optional
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
+from constants import STATUS_ICONS, STATUS_COLORS
 from rendering import (
-    fuel_gauge, _format_tokens, _tool_icon,
+    fuel_gauge, _format_tokens, _format_elapsed, _tool_icon,
     _render_assistant_content, _render_tool_detail,
 )
 
@@ -613,3 +614,123 @@ class DeckStatus(Static):
         queue_count = len(app._mission_queue.queued())
         t.append(f"QUEUE: {queue_count}", style="cyan" if queue_count > 0 else "grey50")
         return t
+
+
+# ── Board table renderer (standalone, takes app as ctx) ─────────────
+
+def refresh_board_table(ctx) -> None:
+    """Rebuild the agent board DataTable.
+
+    Parameters
+    ----------
+    ctx : PriFlyCommander
+        The app instance — all state is read through ``ctx``.
+    """
+    pilots = ctx._roster.all_pilots()
+
+    # Skip full table rebuild when visible state hasn't changed — table.clear() +
+    # add_row() on every 3s tick is the biggest source of UI jank with active agents.
+    sig = "|".join(
+        f"{p.callsign}:{p.status}:{p.fuel_pct}:{p.tokens_used}:{p.error_count}"
+        f":{p.mood}:{p.flight_phase}:{p.status_hint}:{p.tool_calls}"
+        for p in sorted(pilots, key=lambda p: p.callsign)
+    )
+    if sig == ctx._board_state_sig:
+        return
+    ctx._board_state_sig = sig
+
+    table = ctx.query_one("#agent-table", DataTable)
+    # Remember selected pilot by callsign (stable across refreshes)
+    prev_callsign = ""
+    if table.row_count > 0 and table.cursor_row < len(ctx._sorted_pilots):
+        prev_callsign = ctx._sorted_pilots[table.cursor_row].callsign
+    table.clear()
+
+    ctx._sorted_pilots = sorted(pilots, key=lambda p: p.callsign)
+
+    critical = []
+    for pilot in ctx._sorted_pilots:
+        icon = STATUS_ICONS.get(pilot.status, "?")
+        color = STATUS_COLORS.get(pilot.status, "white")
+
+        # Callsign
+        cs = Text()
+        cs.append(f"{pilot.callsign}", style="bold")
+        if pilot.mood != "steady":
+            mood_style = {
+                "in_the_zone": "bold green",
+                "struggling": "bold red",
+                "strained": "yellow",
+                "stuck": "dim",
+                "satisfied": "bold bright_green",
+            }.get(pilot.mood, "")
+            cs.append(f" ({pilot.mood})", style=mood_style)
+
+        # Status
+        status = Text()
+        status.append(f"{icon} ", style=color)
+        status.append(pilot.status, style=f"bold {color}")
+
+        # Fuel
+        bar = fuel_gauge(pilot.fuel_pct, blink=ctx._bingo_blink)
+        if pilot.fuel_pct <= 30:
+            critical.append(f"{pilot.callsign} ({pilot.fuel_pct}%)")
+
+        # Time
+        elapsed = time_mod.time() - pilot.launched_at if pilot.launched_at > 0 else 0
+        time_str = _format_elapsed(elapsed)
+
+        # Tools
+        tools = Text()
+        tools.append(str(pilot.tool_calls), style="bold white")
+        tools.append(" tx", style="grey70")
+        if pilot.error_count > 0:
+            tools.append(f" {pilot.error_count}\u2717", style="bold red")
+
+        # Mission
+        mission = Text()
+        mission.append(f"{pilot.ticket_id}", style="bold")
+        # Show title if different from ticket ID, truncated
+        title = pilot.mission_title
+        if title and title != pilot.ticket_id and title not in ("Unknown", "unknown"):
+            # Clean up title — strip ticket ID prefix if present
+            clean_title = title.replace(f"[{pilot.ticket_id}] ", "").replace(f"{pilot.ticket_id}: ", "")
+            if clean_title:
+                mission.append(f"\n{clean_title[:45]}", style="grey70")
+        if pilot.flight_phase:
+            mission.append(f"\n\u00bb {pilot.flight_phase[:40]}", style="italic cyan")
+        if pilot.status_hint:
+            # Only show server URLs, not full paths
+            hint = pilot.status_hint
+            if "localhost:" in hint or "127.0.0.1:" in hint:
+                mission.append(f"\n\u26a1 {hint}", style="bold cyan")
+
+        table.add_row(
+            cs,
+            mission,
+            Text(pilot.model, style="italic"),
+            status,
+            bar,
+            Text(time_str, style="grey70"),
+            tools,
+            height=2,
+        )
+
+    # Restore cursor by callsign (stable even when pilots are added/removed)
+    if table.row_count > 0 and prev_callsign:
+        restored = next(
+            (i for i, p in enumerate(ctx._sorted_pilots) if p.callsign == prev_callsign),
+            0,
+        )
+        table.move_cursor(row=restored)
+    elif table.row_count > 0:
+        table.move_cursor(row=0)
+
+    # Alert bar for critical fuel
+    alert_bar = ctx.query_one("#alert-bar")
+    if critical:
+        names = ", ".join(critical)
+        alert_bar.update(f"\u26a0 FUEL CRITICAL: {names} \u2014 BINGO RTB \u26a0")
+        alert_bar.add_class("visible")
+    else:
+        alert_bar.remove_class("visible")
