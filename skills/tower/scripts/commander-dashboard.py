@@ -1441,7 +1441,7 @@ class PriFlyCommander(App):
         self._roster.remove(callsign)
         self._legacy_agents.pop(tid, None)
         self._dismissed_tickets.add(tid)  # prevent re-add by _sync_legacy_agents
-        self._board_state_sig = ""  # force table rebuild
+        self._board_state_sig = "__force_rebuild__"  # sentinel value that never matches a real sig
         self._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
 
         # Remove sprite immediately — don't wait for tombstone TTL
