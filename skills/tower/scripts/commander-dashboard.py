@@ -195,6 +195,7 @@ class PriFlyCommander(App):
     #airboss-log {
         height: auto; max-height: 10;
         padding: 0 1;
+        overflow-x: hidden;
     }
 
     #radio-section {
@@ -413,7 +414,7 @@ class PriFlyCommander(App):
         )
         yield Vertical(
             Static("", id="airboss-header"),
-            RichLog(id="airboss-log", highlight=True, markup=True, auto_scroll=True),
+            RichLog(id="airboss-log", highlight=True, markup=True, auto_scroll=True, wrap=True),
             id="airboss-section",
         )
         yield MissionQueuePanel(id="queue-section")
@@ -642,9 +643,11 @@ class PriFlyCommander(App):
                 # New legacy agent — register in roster
                 # If title == ticket_id, try Linear lookup
                 title = agent.title
-                # Note: Linear title lookup removed from sync path — it was
-                # blocking the main thread with HTTP calls. Title gets populated
-                # by the XO or when the user opens a briefing.
+                # Enrich title from mission queue if available (no API call needed)
+                if title == tid or title in ("Unknown", "unknown", ""):
+                    queued_mission = self._mission_queue._missions.get(tid)
+                    if queued_mission and queued_mission.title:
+                        title = queued_mission.title[:60]
                 pilot = self._roster.assign(
                     ticket_id=tid,
                     model=agent.model if agent.model not in ("unknown", "Unknown", "") else "sonnet",
@@ -660,6 +663,12 @@ class PriFlyCommander(App):
             # Sync worktree path from legacy state
             if agent.worktree_path and not pilot.worktree_path:
                 pilot.worktree_path = agent.worktree_path
+
+            # Enrich pilot title from queue if still showing ticket ID
+            if pilot.mission_title == tid or pilot.mission_title in ("Unknown", "unknown", ""):
+                queued = self._mission_queue._missions.get(tid)
+                if queued and queued.title and queued.title != tid:
+                    pilot.mission_title = queued.title[:60]
 
             # Register with inline sentinel for JSONL classification
             if self._use_inline_sentinel and agent.worktree_path:
