@@ -153,8 +153,15 @@ class PriFlyCommander(App):
     #agent-table { height: 1fr; }
 
     #queue-section {
-        height: auto; max-height: 8;
+        height: auto; max-height: 14;
         border-top: solid $accent;
+    }
+    #queue-header {
+        height: 1; padding: 0 1;
+        background: $surface-darken-1;
+    }
+    #queue-table {
+        height: auto; max-height: 12;
     }
 
     /* Comms: pre-built 2x2 grid with 4 slots */
@@ -2070,7 +2077,7 @@ class PriFlyCommander(App):
             self._refresh_table()
             self.query_one("#header-bar", PriFlyHeader).refresh()
             self.query_one("#deck-status", DeckStatus).refresh()
-            self.query_one("#queue-section", MissionQueuePanel).refresh()
+            self.query_one("#queue-section", MissionQueuePanel).refresh_queue()
             self.query_one("#radio-section", RadioChatter).refresh()
         except Exception:
             pass  # Don't crash on periodic refresh

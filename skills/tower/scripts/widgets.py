@@ -23,7 +23,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, RichLog, Static, TextArea
+from textual.widgets import Button, DataTable, RichLog, Static, TextArea
 
 
 # ── PRI-FLY Header ──────────────────────────────────────────────────
@@ -413,31 +413,144 @@ class ChatPane(Vertical):
 
 # ── Mission Queue Panel ──────────────────────────────────────────────
 
-class MissionQueuePanel(Static):
-    def render(self) -> Text:
-        app = self.app
-        queue = app._mission_queue
+class _QueueTable(DataTable):
+    """DataTable subclass with deploy/remove via on_key override."""
 
-        t = Text()
-        t.append(" MISSION QUEUE", style="bold bright_white")
+    def _on_key(self, event) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            self.action_deploy_mission()
+            return
+        if event.key in ("delete", "backspace", "x"):
+            event.prevent_default()
+            event.stop()
+            self.action_remove_mission()
+            return
 
-        queued = queue.queued()
-        if not queued:
-            t.append("\n  No missions queued", style="grey50")
-            return t
+    def action_deploy_mission(self) -> None:
+        """Deploy selected mission."""
+        try:
+            app = self.app
+            queued = app._mission_queue.queued()
+            if self.row_count == 0 or self.cursor_row >= len(queued):
+                return
+            mission = queued[self.cursor_row]
+            app._handle_command(f"/deploy {mission.id}")
+            app._mission_queue.remove(mission.id)
+            # Find parent panel and refresh
+            for ancestor in self.ancestors:
+                if isinstance(ancestor, MissionQueuePanel):
+                    ancestor.refresh_queue()
+                    break
+        except Exception as e:
+            self.app._add_radio("PRI-FLY", f"Deploy failed: {e}", "error")
 
-        for m in queued[:8]:
-            pri_style = {1: "bold red", 2: "yellow", 3: "grey70"}.get(m.priority, "white")
-            t.append(f"\n  P{m.priority}", style=pri_style)
-            t.append(f"  {m.id}", style="bold white")
-            t.append(f"  {m.title[:40]}", style="white")
-            t.append(f"  [{m.model}]", style="grey70")
-            t.append(f"  ×{m.agent_count}", style="cyan")
+    def action_remove_mission(self) -> None:
+        """Remove selected mission from queue."""
+        try:
+            app = self.app
+            queued = app._mission_queue.queued()
+            if self.row_count == 0 or self.cursor_row >= len(queued):
+                return
+            mission = queued[self.cursor_row]
+            app._mission_queue.remove(mission.id)
+            app._add_radio("PRI-FLY", f"Removed {mission.id} from queue", "system")
+            for ancestor in self.ancestors:
+                if isinstance(ancestor, MissionQueuePanel):
+                    ancestor.refresh_queue()
+                    break
+        except Exception as e:
+            self.app._add_radio("PRI-FLY", f"Remove failed: {e}", "error")
 
-        if len(queued) > 8:
-            t.append(f"\n  ... +{len(queued) - 8} more", style="dim")
 
-        return t
+class MissionQueuePanel(Vertical):
+    """Scrollable, interactive mission queue with deploy and remove actions."""
+
+    def compose(self) -> ComposeResult:
+        yield Static(" MISSION QUEUE", id="queue-header")
+        yield _QueueTable(id="queue-table")
+
+    def on_mount(self) -> None:
+        table = self.query_one("#queue-table", DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_columns("PRI", "ID", "TITLE", "MODEL")
+
+    def refresh_queue(self) -> None:
+        """Rebuild the queue table from current mission data."""
+        try:
+            app = self.app
+            queue = app._mission_queue
+            queued = queue.queued()
+
+            table = self.query_one("#queue-table", DataTable)
+
+            # Remember cursor position
+            prev_row = table.cursor_row if table.row_count > 0 else 0
+
+            table.clear()
+
+            if not queued:
+                return
+
+            for m in queued:
+                pri_style = {1: "bold red", 2: "yellow", 3: "grey70"}.get(m.priority, "white")
+                pri_text = Text(f"P{m.priority}", style=pri_style)
+                id_text = Text(m.id, style="bold white")
+                title_text = Text(m.title[:45], style="white")
+                model_text = Text(m.model, style="italic grey70")
+                table.add_row(pri_text, id_text, title_text, model_text, key=m.id)
+
+            # Restore cursor
+            if table.row_count > 0:
+                table.move_cursor(row=min(prev_row, table.row_count - 1))
+
+            # Update header with count
+            header = self.query_one("#queue-header", Static)
+            header.update(Text(f" MISSION QUEUE ({len(queued)})", style="bold bright_white"))
+        except Exception:
+            pass
+
+    def _get_selected_mission_id(self) -> str:
+        """Get the mission ID of the currently selected row."""
+        try:
+            table = self.query_one("#queue-table", DataTable)
+            if table.row_count == 0:
+                return ""
+            row_idx = table.cursor_row
+            queued = self.app._mission_queue.queued()
+            if row_idx < len(queued):
+                return queued[row_idx].id
+        except Exception:
+            pass
+        return ""
+
+    def action_deploy_mission(self) -> None:
+        """Deploy the selected mission — creates worktree, adds to board."""
+        mission_id = self._get_selected_mission_id()
+        if not mission_id:
+            return
+        try:
+            app = self.app
+            app._handle_command(f"/deploy {mission_id}")
+            # Remove from queue after deploy
+            app._mission_queue.remove(mission_id)
+            self.refresh_queue()
+        except Exception as e:
+            self.app._add_radio("PRI-FLY", f"Deploy failed: {e}", "error")
+
+    def action_remove_mission(self) -> None:
+        """Remove the selected mission from the queue."""
+        mission_id = self._get_selected_mission_id()
+        if not mission_id:
+            return
+        try:
+            self.app._mission_queue.remove(mission_id)
+            self.app._add_radio("PRI-FLY", f"Removed {mission_id} from queue", "system")
+            self.refresh_queue()
+        except Exception as e:
+            self.app._add_radio("PRI-FLY", f"Remove failed: {e}", "error")
 
 
 # ── Radio Chatter ────────────────────────────────────────────────────

@@ -676,3 +676,64 @@ async def test_pilot_status_reflected_in_table(mock_externals):
 
         # Still one row, but sig changed (status different)
         assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_mission_queue_renders(mock_externals):
+    """Mission queue shows queued missions."""
+    app = _make_app(mock_externals)
+    async with app.run_test(size=(120, 40)) as pilot_driver:
+        from mission_queue import Mission
+        import time as t
+
+        # Add missions to queue
+        for i in range(5):
+            m = Mission(
+                id=f"ENG-{100+i}", title=f"Task {i}", source="adhoc",
+                priority=i % 3 + 1, directives=[], agent_count=1,
+                model="sonnet", status="QUEUED", spec_content=f"Do task {i}",
+                created_at=t.time(),
+            )
+            app._mission_queue.add(m)
+
+        # Refresh queue
+        queue_panel = app.query_one("#queue-section")
+        queue_panel.refresh_queue()
+        await pilot_driver.pause()
+
+        from textual.widgets import DataTable
+        queue_table = app.query_one("#queue-table", DataTable)
+        assert queue_table.row_count == 5
+
+
+@pytest.mark.asyncio
+async def test_mission_queue_remove(mock_externals):
+    """Delete key removes selected mission from queue."""
+    app = _make_app(mock_externals)
+    async with app.run_test(size=(120, 40)) as pilot_driver:
+        from mission_queue import Mission
+        import time as t
+
+        m = Mission(
+            id="ENG-999", title="Remove me", source="adhoc",
+            priority=2, directives=[], agent_count=1,
+            model="sonnet", status="QUEUED", spec_content="test",
+            created_at=t.time(),
+        )
+        app._mission_queue.add(m)
+
+        queue_panel = app.query_one("#queue-section")
+        queue_panel.refresh_queue()
+        await pilot_driver.pause()
+
+        from textual.widgets import DataTable
+        queue_table = app.query_one("#queue-table", DataTable)
+        assert queue_table.row_count == 1
+
+        # Call remove action directly (keypress routing tested manually in TUI)
+        queue_table.focus()
+        queue_table.action_remove_mission()
+        await pilot_driver.pause()
+
+        assert queue_table.row_count == 0
+        assert len(app._mission_queue.queued()) == 0
