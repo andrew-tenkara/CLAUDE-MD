@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from agent_manager import AgentManager, AgentProcess, StreamEvent
 from sdk_bridge import SdkAgentManager, SdkAgent, AgentEvent, sdk_available
 from inline_sentinel import InlineSentinel
+from squadron_analyst import SquadronAnalyst
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
 from mission_queue import Mission, MissionQueue
 from linear_bridge import (
@@ -333,6 +334,13 @@ class PriFlyCommander(App):
         )
         self._use_inline_sentinel = True  # toggle to use subprocess sentinel instead
 
+        # Squadron analyst — periodic Haiku assessment of flight deck
+        self._analyst = SquadronAnalyst(
+            on_assessment=self._on_squadron_assessment,
+            interval=120,  # every 2 minutes
+        )
+        self._analyst.set_snapshot_provider(self._get_pilot_snapshot)
+
         # Status reconciler — token deltas, fuel jumps, multi-source priority
         self._reconciler = StatusReconciler(stale_threshold=4)
 
@@ -446,6 +454,10 @@ class PriFlyCommander(App):
             self._start_sentinel()
             self.set_interval(15.0, self._check_sentinel_health)
 
+        # Start squadron analyst (Haiku-powered flight deck assessment)
+        self._analyst.start()
+        self._add_radio("PRI-FLY", "ANALYST — Haiku tactical assessment online (2min cycle)", "system")
+
         # Focus the board table
         self.query_one("#agent-table", DataTable).focus()
 
@@ -486,6 +498,13 @@ class PriFlyCommander(App):
         try:
             if self._inline_sentinel and self._inline_sentinel.is_alive:
                 self._inline_sentinel.stop()
+        except Exception:
+            pass
+
+        # Stop squadron analyst
+        try:
+            if self._analyst and self._analyst.is_alive:
+                self._analyst.stop()
         except Exception:
             pass
 
@@ -822,6 +841,46 @@ class PriFlyCommander(App):
             pass
 
     # ── SDK agent event callbacks ─────────────────────────────────────
+
+    def _get_pilot_snapshot(self) -> list[dict]:
+        """Build a snapshot of all pilots for the squadron analyst."""
+        pilots = self._roster.all_pilots()
+        now = time_mod.time()
+        return [
+            {
+                "callsign": p.callsign,
+                "status": p.status,
+                "fuel_pct": p.fuel_pct,
+                "tool_calls": p.tool_calls,
+                "error_count": p.error_count,
+                "ticket_id": p.ticket_id,
+                "elapsed_mins": (now - p.launched_at) / 60 if p.launched_at > 0 else 0,
+            }
+            for p in pilots
+        ]
+
+    def _on_squadron_assessment(self, assessment: str) -> None:
+        """Called from analyst thread with Haiku's tactical assessment."""
+        try:
+            self.call_from_thread(self._deliver_assessment, assessment)
+        except Exception:
+            pass
+
+    def _deliver_assessment(self, assessment: str) -> None:
+        """Deliver assessment to radio chatter AND XO's airboss log."""
+        # Radio chatter — visible on TUI
+        self._add_radio("ANALYST", assessment, "system")
+
+        # Airboss log — XO sees it in the Mini Boss section
+        try:
+            from rich.text import Text as RichText
+            airboss_log = self.query_one("#airboss-log", RichLog)
+            t = RichText()
+            t.append("  ★ ANALYST: ", style="bold magenta")
+            t.append(assessment, style="white")
+            airboss_log.write(t)
+        except Exception:
+            pass
 
     def _on_sentinel_status_change(self, ticket_id: str, old_status: str, new_status: str, phase: str) -> None:
         """Called from inline sentinel thread when an agent's status changes."""
