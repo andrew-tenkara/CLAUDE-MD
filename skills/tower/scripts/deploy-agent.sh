@@ -8,11 +8,13 @@
 #   1. Creates a git worktree (or reuses existing)
 #   2. Writes .sortie/ protocol files (directive, model, progress)
 #   3. Symlinks .env.local from the base project
-#   4. Installs deps if needed (pnpm install)
+#   4. Installs deps if needed (pnpm/npm install)
 #   5. Launches Claude in the worktree with the right flags
 #
-# The Mini Boss and other orchestrators should call this script
-# instead of building `claude` commands by hand.
+# Exit codes:
+#   0 — success
+#   1 — usage error or fatal failure
+#   2 — worktree/branch already exists (deploy-agent reuses it)
 
 set -euo pipefail
 
@@ -34,7 +36,7 @@ while [[ $# -gt 0 ]]; do
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     --branch)      BRANCH_OVERRIDE="$2"; shift 2 ;;
     --no-launch)   NO_LAUNCH=true; shift ;;
-    -*)            echo "Unknown flag: $1" >&2; exit 1 ;;
+    -*)            echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
         TICKET_ID="$1"
@@ -49,38 +51,62 @@ if [ -z "$TICKET_ID" ]; then
   exit 1
 fi
 
+# Validate model
+case "$MODEL" in
+  sonnet|opus|haiku) ;;
+  *) echo "ERROR: Invalid model '$MODEL'. Must be sonnet, opus, or haiku." >&2; exit 1 ;;
+esac
+
 # ── Resolve project dir ──────────────────────────────────────────────
 if [ -z "$PROJECT_DIR" ]; then
   PROJECT_DIR="${SORTIE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 fi
 
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo "ERROR: Project directory does not exist: $PROJECT_DIR" >&2
+  exit 1
+fi
+
 # ── Create worktree ──────────────────────────────────────────────────
-# Use Linear branch name if provided, otherwise fall back to sortie/<ticket>
 BRANCH_NAME="${BRANCH_OVERRIDE:-sortie/${TICKET_ID}}"
 WORKTREE_PATH=""
+CREATE_EXIT=0
 
 if [ -x "${SORTIE_SCRIPTS}/create-worktree.sh" ]; then
-  OUTPUT=$(bash "${SORTIE_SCRIPTS}/create-worktree.sh" "$TICKET_ID" "$BRANCH_NAME" dev --model "$MODEL" --resume 2>&1) || true
-  for line in $OUTPUT; do
+  OUTPUT=$(bash "${SORTIE_SCRIPTS}/create-worktree.sh" "$TICKET_ID" "$BRANCH_NAME" dev --model "$MODEL" --resume 2>&1) || CREATE_EXIT=$?
+
+  # Parse output safely (handles spaces in paths)
+  while IFS= read -r line; do
     case "$line" in
       WORKTREE_CREATED:*) WORKTREE_PATH="${line#WORKTREE_CREATED:}" ;;
       WORKTREE_EXISTS:*)  WORKTREE_PATH="${line#WORKTREE_EXISTS:}" ;;
     esac
-  done
+  done <<< "$OUTPUT"
+
+  # Exit code 2 = worktree/branch already exists — not fatal if we got a path
+  if [ "$CREATE_EXIT" -ne 0 ] && [ "$CREATE_EXIT" -ne 2 ]; then
+    echo "ERROR: create-worktree.sh failed (exit $CREATE_EXIT):" >&2
+    echo "$OUTPUT" >&2
+    exit 1
+  fi
 fi
 
 if [ -z "$WORKTREE_PATH" ]; then
   # Fallback — create worktree manually
   WORKTREE_PATH="${PROJECT_DIR}/.claude/worktrees/${TICKET_ID}"
   if [ ! -d "$WORKTREE_PATH" ]; then
-    git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" dev 2>/dev/null || \
-    git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>/dev/null || true
+    if ! git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" dev 2>/dev/null; then
+      if ! git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>/dev/null; then
+        echo "ERROR: Failed to create git worktree at $WORKTREE_PATH" >&2
+        exit 1
+      fi
+    fi
   fi
   mkdir -p "$WORKTREE_PATH/.sortie"
 fi
 
 if [ ! -d "$WORKTREE_PATH" ]; then
-  echo "ERROR: Failed to create worktree at $WORKTREE_PATH" >&2
+  echo "ERROR: Worktree directory does not exist: $WORKTREE_PATH" >&2
   exit 1
 fi
 
@@ -132,12 +158,20 @@ cd "$WORKTREE_PATH"
 if [ ! -f .env.local ] && [ -f "${PROJECT_DIR}/.env.local" ]; then
   ln -sf "${PROJECT_DIR}/.env.local" .env.local
   echo "ENV:symlinked .env.local"
+elif [ ! -f .env.local ]; then
+  echo "ENV:WARNING — no .env.local found in project root (${PROJECT_DIR})" >&2
 fi
 
-# Install deps
+# Install deps — try pnpm first, then npm
 if [ -f pnpm-lock.yaml ] && [ ! -d node_modules ]; then
-  echo "DEPS:installing..."
-  pnpm install --frozen-lockfile 2>/dev/null || pnpm install 2>/dev/null || true
+  echo "DEPS:installing (pnpm)..."
+  if ! pnpm install --frozen-lockfile 2>/dev/null; then
+    pnpm install 2>/dev/null || echo "DEPS:WARNING — pnpm install failed" >&2
+  fi
+  echo "DEPS:done"
+elif [ -f package-lock.json ] && [ ! -d node_modules ]; then
+  echo "DEPS:installing (npm)..."
+  npm ci 2>/dev/null || npm install 2>/dev/null || echo "DEPS:WARNING — npm install failed" >&2
   echo "DEPS:done"
 fi
 
@@ -147,7 +181,13 @@ if [ -x "${SORTIE_SCRIPTS}/write-settings.sh" ]; then
 fi
 
 # ── Build disallowed tools list ──────────────────────────────────────
-DISALLOWED="'Bash(git push --force*)' 'Bash(git push -f *)' 'Bash(git push *--force*)' 'Bash(git push *-f *)' 'Bash(git branch -D:*)' 'Bash(git branch -d:*)' 'Bash(git branch --delete:*)' 'Bash(git clean:*)' 'Bash(git reset --hard:*)' 'Bash(git checkout -- :*)' 'Bash(git restore:*)' 'Bash(rm:*)' 'Bash(rm )' 'Bash(rmdir:*)' 'Bash(unlink:*)' 'Bash(trash:*)' 'Bash(sudo:*)' 'Bash(chmod:*)' 'Bash(chown:*)' 'mcp__linear__*'"
+# Centralized list file takes precedence over inline fallback
+DISALLOWED_FILE="${SCRIPT_DIR}/disallowed-tools.txt"
+if [ -f "$DISALLOWED_FILE" ]; then
+  DISALLOWED=$(tr '\n' ' ' < "$DISALLOWED_FILE")
+else
+  DISALLOWED="'Bash(git push --force*)' 'Bash(git push -f *)' 'Bash(git push *--force*)' 'Bash(git push *-f *)' 'Bash(git branch -D:*)' 'Bash(git branch -d:*)' 'Bash(git branch --delete:*)' 'Bash(git clean:*)' 'Bash(git reset --hard:*)' 'Bash(git checkout -- :*)' 'Bash(git restore:*)' 'Bash(rm:*)' 'Bash(rm )' 'Bash(rmdir:*)' 'Bash(unlink:*)' 'Bash(trash:*)' 'Bash(sudo:*)' 'Bash(chmod:*)' 'Bash(chown:*)' 'mcp__linear__*'"
+fi
 
 # ── Build kickoff ────────────────────────────────────────────────────
 KICKOFF="Read ${SORTIE_DIR}/directive.md and follow all instructions. Track progress in ${SORTIE_DIR}/progress.md"
@@ -157,7 +197,6 @@ LAUNCH_SCRIPT="${SORTIE_DIR}/launch.sh"
 cat > "${LAUNCH_SCRIPT}" << 'LAUNCH_EOF'
 #!/usr/bin/env bash
 LAUNCH_EOF
-# Append non-heredoc content (needs variable expansion)
 cat >> "${LAUNCH_SCRIPT}" << LAUNCH_EOF2
 cd '${WORKTREE_PATH}'
 
@@ -174,12 +213,13 @@ chmod +x "${LAUNCH_SCRIPT}"
 echo "LAUNCH_SCRIPT:${LAUNCH_SCRIPT}"
 echo "READY: Run: bash '${LAUNCH_SCRIPT}'"
 
-# ── Launch in iTerm2 pane (Pit Boss window) ──────────────────────────
+# ── No-launch mode — exit here ───────────────────────────────────────
 if [ "$NO_LAUNCH" = true ]; then
   echo "PREPPED:${TICKET_ID} (no-launch mode — deploy from TUI with D/R)"
   exit 0
 fi
 
+# ── Launch in iTerm2 pane (Pit Boss window) ──────────────────────────
 STATE_DIR="/tmp/uss-tenkara/_prifly"
 AGENTS_WINDOW_FILE="${STATE_DIR}/agents_window_id"
 AGENTS_SESSION_FILE="${STATE_DIR}/agents_last_session_id"
@@ -210,11 +250,9 @@ end tell
 APPLESCRIPT_EOF
   )
 
-  # Update last session ID so the next deploy splits from this pane
   echo "$NEW_SESSION_ID" > "$AGENTS_SESSION_FILE"
   echo "DEPLOYED:${TICKET_ID} in Pit Boss window"
 else
-  # No Pit Boss window — launch in a new iTerm2 window
   osascript << APPLESCRIPT_EOF
 tell application "iTerm2"
   create window with default profile

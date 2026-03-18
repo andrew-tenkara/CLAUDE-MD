@@ -460,6 +460,10 @@ class PriFlyCommander(App):
         # Terminal title
         self.title = "USS TENKARA PRI-FLY"
 
+        # Tower heartbeat — /tq checks this to verify Tower is alive
+        self._write_heartbeat()
+        self.set_interval(10.0, self._write_heartbeat)
+
         # Animation timers
         self.set_interval(1.0, self._toggle_bingo)
         self.set_interval(2.0, self._toggle_condition)
@@ -549,6 +553,12 @@ class PriFlyCommander(App):
                 os.kill(self._sentinel_pid, 15)  # SIGTERM
         except (ProcessLookupError, PermissionError, OSError):
             pass  # Already dead or can't kill
+
+        # Remove heartbeat so /tq knows Tower is gone
+        try:
+            self._cleanup_heartbeat()
+        except Exception:
+            pass
 
         # Kill any other orphaned sentinels we didn't spawn
         try:
@@ -985,6 +995,27 @@ class PriFlyCommander(App):
                     _play_sound("bingo")
                     self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
                     _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
+
+    # ── Tower heartbeat ─────────────────────────────────────────────
+
+    def _write_heartbeat(self) -> None:
+        """Touch the heartbeat file so /tq can verify Tower is alive.
+
+        Written every 10s. /tq considers Tower dead if heartbeat > 30s old.
+        """
+        try:
+            hb_path = Path("/tmp/uss-tenkara/_prifly/tower_heartbeat")
+            hb_path.parent.mkdir(parents=True, exist_ok=True)
+            hb_path.touch()
+        except OSError:
+            pass
+
+    def _cleanup_heartbeat(self) -> None:
+        """Remove heartbeat file on clean exit so /tq doesn't see a stale Tower."""
+        try:
+            Path("/tmp/uss-tenkara/_prifly/tower_heartbeat").unlink(missing_ok=True)
+        except OSError:
+            pass
 
     # ── UI refresh ───────────────────────────────────────────────────
 
