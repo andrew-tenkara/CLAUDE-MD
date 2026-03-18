@@ -150,6 +150,12 @@ class PriFlyCommander(App):
 
     /* Default mode: board + queue stacked */
     #board-section { height: 1fr; min-height: 6; }
+    #sortie-header {
+        height: 1;
+        padding: 0 1;
+        background: $surface-darken-2;
+        color: $text;
+    }
     #agent-table { height: 1fr; }
 
     #queue-section {
@@ -388,6 +394,7 @@ class PriFlyCommander(App):
         yield Static("", id="hotkey-bar")
         yield Horizontal(
             Vertical(
+                Static("", id="sortie-header"),
                 DataTable(id="agent-table"),
                 id="board-section",
             ),
@@ -2085,6 +2092,19 @@ class PriFlyCommander(App):
             self._roster.update_moods()
             self._refresh_table()
             self.query_one("#header-bar", PriFlyHeader).refresh()
+
+            # Update sortie list header with count
+            pilots = self._roster.all_pilots()
+            airborne = sum(1 for p in pilots if p.status == "AIRBORNE")
+            total = len(pilots)
+            sortie_hdr = self.query_one("#sortie-header", Static)
+            t = Text()
+            t.append(" ✈ SORTIE LIST", style="bold bright_white")
+            if total > 0:
+                t.append(f"  {total} sortie{'s' if total != 1 else ''}", style="grey70")
+                if airborne > 0:
+                    t.append(f"  •  {airborne} airborne", style="bold green")
+            sortie_hdr.update(t)
             self.query_one("#deck-status", DeckStatus).refresh()
             self.query_one("#queue-section", MissionQueuePanel).refresh_queue()
             self.query_one("#radio-section", RadioChatter).refresh()
