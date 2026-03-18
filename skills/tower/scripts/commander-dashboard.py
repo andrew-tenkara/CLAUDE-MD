@@ -1392,7 +1392,7 @@ class PriFlyCommander(App):
         def _on_dismiss(result: Optional[tuple[str, str]]) -> None:
             if result:
                 ticket, model = result
-                self._cmd_deploy([ticket, "--model", model])
+                self._dispatcher.cmd_deploy([ticket, "--model", model])
         self.push_screen(DeployInputScreen(), callback=_on_dismiss)
 
     def _get_linear_org(self) -> str:
@@ -1568,7 +1568,7 @@ class PriFlyCommander(App):
 
     def action_sitrep(self) -> None:
         """Request sitrep from all airborne agents."""
-        self._cmd_sitrep()
+        self._dispatcher.cmd_sitrep()
 
     def action_open_browser(self) -> None:
         """Open the dev server URL for the selected pilot in the browser."""
@@ -1679,7 +1679,7 @@ class PriFlyCommander(App):
         if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE", "QUEUED"):
             self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — can't resume", "error")
             return
-        self._cmd_resume([pilot.callsign])
+        self._dispatcher.cmd_resume([pilot.callsign])
 
     def action_waveoff_selected(self) -> None:
         """Wave off (hard kill) the selected pilot."""
@@ -1688,7 +1688,7 @@ class PriFlyCommander(App):
             if not pilot:
                 self._add_radio("PRI-FLY", "No pilot selected", "error")
                 return
-            self._cmd_wave_off([pilot.callsign])
+            self._dispatcher.cmd_wave_off([pilot.callsign])
         except Exception as e:
             self._add_radio("PRI-FLY", f"Wave-off failed: {e}", "error")
 
@@ -1701,7 +1701,7 @@ class PriFlyCommander(App):
         if pilot.status != "AIRBORNE":
             self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — not airborne", "error")
             return
-        self._cmd_recall([pilot.callsign])
+        self._dispatcher.cmd_recall([pilot.callsign])
 
     def action_sync_worktrees(self) -> None:
         """Force an immediate sync of all worktrees."""
@@ -1714,7 +1714,7 @@ class PriFlyCommander(App):
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
-        self._cmd_compact([pilot.callsign])
+        self._dispatcher.cmd_compact([pilot.callsign])
 
     def action_start_server(self) -> None:
         """Spin up a dev server for the selected pilot's worktree."""
