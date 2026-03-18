@@ -341,7 +341,34 @@ class SdkAgent:
         if msg.usage:
             self.total_tokens_in = msg.usage.get("input_tokens", self.total_tokens_in)
             self.total_tokens_out = msg.usage.get("output_tokens", self.total_tokens_out)
-        # Tee to JSONL
+
+        # If SDK didn't provide token counts but we have cost, estimate tokens
+        # so the JSONL is compatible with parse_jsonl_metrics and fuel gauge works
+        estimated_in = self.total_tokens_in
+        estimated_out = self.total_tokens_out
+        if estimated_in == 0 and self.total_cost_usd > 0:
+            # Rough estimate: sonnet ~$3/MTok in, ~$15/MTok out
+            # Assume 80/20 in/out split, average $5/MTok blended
+            estimated_total = int(self.total_cost_usd / 5.0 * 1_000_000)
+            estimated_in = int(estimated_total * 0.8)
+            estimated_out = int(estimated_total * 0.2)
+            self.total_tokens_in = estimated_in
+            self.total_tokens_out = estimated_out
+
+        # Tee to JSONL — write a synthetic assistant message with usage
+        # so parse_jsonl_metrics can extract token counts
+        self._write_jsonl({
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "usage": {
+                    "input_tokens": estimated_in,
+                    "output_tokens": estimated_out,
+                },
+            },
+            "timestamp": time.time(),
+        })
         self._write_jsonl({
             "type": "result",
             "session_id": self.session_id,
