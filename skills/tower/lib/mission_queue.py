@@ -31,6 +31,7 @@ class Mission:
     prev_worktree: str = ""     # worktree of the previous stage (for context handoff)
     parent_ticket: str = ""     # parent ticket ID for sub-agent worktrees (fan-out)
     sub_name: str = ""          # sub-agent name (e.g., "api", "ui") — empty = not a sub-agent
+    on_failure: str = "abort"   # "abort" | "continue" | "retry" — what to do when a sibling fails
 
 
 def parse_spec_file(path: str) -> dict:
@@ -322,6 +323,7 @@ class MissionQueue:
                 next_mission_id=data.get("next_mission_id", ""),
                 parent_ticket=data.get("parent_ticket", ""),
                 sub_name=data.get("sub_name", ""),
+                on_failure=data.get("on_failure", "abort"),
             )
             self.add(mission)
             added += 1

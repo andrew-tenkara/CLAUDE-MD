@@ -469,6 +469,7 @@ class PriFlyCommander(App):
         self.set_interval(2.0, self._toggle_condition)
         self.set_interval(2.0, self._refresh_ui)
         self.set_interval(10.0, self._check_idle_agents)
+        self.set_interval(60.0, self._check_pipeline_heartbeats)  # pipeline sub-agent timeout
 
         # Init Air Boss header + spawn immediately (claims first Pit Boss pane)
         self._init_airboss()
@@ -480,6 +481,12 @@ class PriFlyCommander(App):
         # Sync existing worktree agents on startup
         self._sync_legacy_agents()
         self._start_watchers()
+
+        # Restore active pipeline states from checkpoint files
+        try:
+            self._restore_pipeline_states()
+        except Exception:
+            pass
 
         # Periodic legacy sync (catches agents started outside commander)
         # Runs I/O in background to keep the main thread free
@@ -1017,8 +1024,9 @@ class PriFlyCommander(App):
         if not mission or not mission.pipeline_id:
             return
 
-        # Mark this mission complete
+        # Mark this mission complete + checkpoint state
         self._mission_queue.mark_complete(tid)
+        self._save_pipeline_state(mission.pipeline_id)
 
         # ── Step 1: Merge-back + sibling notification (fan-out) ──────
         if mission.parent_ticket and recovered_pilot.worktree_path:
@@ -1093,11 +1101,14 @@ class PriFlyCommander(App):
             _play_sound("recovered")
             _notify("USS TENKARA — FAN-OUT", f"{len(next_seq_missions)} agents deploying at seq {next_seq_missions[0].pipeline_seq}")
 
+        # Checkpoint after deploying next stage
+        self._save_pipeline_state(mission.pipeline_id)
+
     def _merge_back_to_parent(self, recovered_pilot, mission) -> None:
         """Merge a sub-agent's branch back to the parent ticket's branch.
 
-        After merging, write pull-parent.json to each active sibling's worktree
-        so they know to pull the latest from the parent branch.
+        Uses a fencing lock (.sortie/merge.lock) to serialize concurrent merges.
+        After merging, writes pull-parent.json to each active sibling's worktree.
         """
         import subprocess as _sp
 
@@ -1106,8 +1117,7 @@ class PriFlyCommander(App):
         parent_pilot = parent_pilots[0] if parent_pilots else None
         parent_branch = f"sortie/{parent_ticket}"
 
-        sub_branch = recovered_pilot.worktree_path
-        if not sub_branch:
+        if not recovered_pilot.worktree_path:
             return
 
         # Determine the sub-agent's branch name
@@ -1122,10 +1132,26 @@ class PriFlyCommander(App):
             self._add_radio("PRI-FLY", f"Could not determine branch for {recovered_pilot.callsign}", "error")
             return
 
-        # Merge sub-agent's branch into parent branch
-        # Use the parent's worktree if available, otherwise project dir
         merge_cwd = parent_pilot.worktree_path if parent_pilot and parent_pilot.worktree_path else self._project_dir
+
+        # ── Fencing lock — serialize concurrent merge-backs ──────────
+        # Prevents race when two siblings finish simultaneously and both
+        # try to merge. The lock file contains the callsign of the holder.
+        lock_path = Path(merge_cwd) / ".sortie" / "merge.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Spin-wait with timeout (max 30s)
+        lock_start = time_mod.time()
+        while lock_path.exists():
+            if time_mod.time() - lock_start > 30:
+                self._add_radio("PRI-FLY", f"MERGE TIMEOUT — lock held too long, forcing", "error")
+                lock_path.unlink(missing_ok=True)
+                break
+            time_mod.sleep(0.5)
+
         try:
+            lock_path.write_text(recovered_pilot.callsign)
+
             result = _sp.run(
                 ["git", "merge", sub_branch_name, "--no-edit",
                  "-m", f"Merge {recovered_pilot.callsign} ({sub_branch_name}) into {parent_branch}"],
@@ -1148,6 +1174,8 @@ class PriFlyCommander(App):
         except Exception as e:
             self._add_radio("PRI-FLY", f"Merge failed: {e}", "error")
             return
+        finally:
+            lock_path.unlink(missing_ok=True)
 
         # Notify active siblings via filesystem signal
         active_sibs = self._mission_queue.active_siblings(
@@ -1197,6 +1225,107 @@ class PriFlyCommander(App):
                     except OSError:
                         pass
         return "\n\n".join(parts)
+
+    # ── Pipeline state checkpoint (survives Tower restart) ─────────
+
+    def _save_pipeline_state(self, pipeline_id: str) -> None:
+        """Write pipeline progress to disk so Tower can resume after crash.
+
+        Writes to .sortie/pipeline-state.json in the project dir.
+        On restart, _restore_pipeline_state() reads it back.
+        """
+        missions = [
+            m for m in self._mission_queue.all_missions()
+            if m.pipeline_id == pipeline_id
+        ]
+        if not missions:
+            return
+
+        state = {
+            "pipeline_id": pipeline_id,
+            "updated_at": int(time_mod.time()),
+            "missions": [
+                {
+                    "id": m.id,
+                    "title": m.title,
+                    "status": m.status,
+                    "pipeline_seq": m.pipeline_seq,
+                    "sub_name": m.sub_name,
+                    "parent_ticket": m.parent_ticket,
+                    "model": m.model,
+                }
+                for m in sorted(missions, key=lambda x: (x.pipeline_seq, x.id))
+            ],
+        }
+
+        state_dir = Path(self._project_dir) / ".sortie"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state_file = state_dir / f"pipeline-{pipeline_id}.json"
+        try:
+            # Atomic write
+            tmp = state_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state, indent=2))
+            tmp.rename(state_file)
+        except OSError as e:
+            log.warning("Failed to save pipeline state for %s: %s", pipeline_id, e)
+
+    def _restore_pipeline_states(self) -> None:
+        """On startup, restore active pipeline states from checkpoint files.
+
+        Called from on_mount after initial sync.
+        """
+        state_dir = Path(self._project_dir) / ".sortie"
+        if not state_dir.is_dir():
+            return
+        for f in state_dir.glob("pipeline-*.json"):
+            try:
+                state = json.loads(f.read_text(encoding="utf-8"))
+                pid = state.get("pipeline_id", "")
+                if not pid:
+                    continue
+                # Only restore if pipeline has incomplete missions
+                missions = state.get("missions", [])
+                has_incomplete = any(m["status"] not in ("COMPLETE",) for m in missions)
+                if has_incomplete:
+                    self._add_radio("PRI-FLY", f"PIPELINE RESTORED — {pid} (from checkpoint)", "system")
+            except (OSError, json.JSONDecodeError):
+                pass
+
+    # ── Sub-agent heartbeat timeout (prevents infinite fan-in wait) ──
+
+    _PIPELINE_HEARTBEAT_TIMEOUT = 600  # 10 minutes without progress.md update = stale
+
+    def _check_pipeline_heartbeats(self) -> None:
+        """Check if any pipeline sub-agents have gone silent.
+
+        If a sub-agent's progress.md hasn't been updated in 10 minutes and
+        they're AIRBORNE, mark them MAYDAY so the fan-in gate doesn't wait forever.
+        Called from the idle check timer.
+        """
+        now = time_mod.time()
+        for mission in self._mission_queue.all_missions():
+            if not mission.pipeline_id or mission.status != "ACTIVE":
+                continue
+            pilots = self._roster.get_by_ticket(mission.id)
+            for pilot in pilots:
+                if pilot.status != "AIRBORNE" or not pilot.worktree_path:
+                    continue
+                # Check progress.md mtime as heartbeat
+                progress_file = Path(pilot.worktree_path) / ".sortie" / "progress.md"
+                try:
+                    if progress_file.exists():
+                        age = now - progress_file.stat().st_mtime
+                        if age > self._PIPELINE_HEARTBEAT_TIMEOUT:
+                            pilot.status = "MAYDAY"
+                            self._add_radio(
+                                pilot.callsign,
+                                f"PIPELINE TIMEOUT — no progress update in {int(age)}s",
+                                "error",
+                            )
+                            _play_sound("mayday")
+                            _notify("USS TENKARA — TIMEOUT", f"{pilot.callsign} stalled in pipeline")
+                except OSError:
+                    pass
 
     # ── Tower heartbeat ─────────────────────────────────────────────
 
