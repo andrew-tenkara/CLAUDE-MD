@@ -37,13 +37,13 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 | Key | Action |
 |-----|--------|
 | `T` | Open terminal at project root |
-| `D` | Open agent pane (iTerm2 split) |
+| `D` | Deploy — open pane + run directive (full mission kickoff) |
+| `R` | Resume — open pane as fresh claude, reads progress, asks what's next |
 | `V` | Spin up dev server for selected pilot |
 | `O` | Open pilot's localhost server in browser |
 | `P` | Open pilot's GitHub PR in browser |
 | `L` | Browse Linear issues (or pilot's ticket) |
 | `M` | Relaunch Mini Boss |
-| `R` | Resume — relaunch recovered/idle pilot |
 | `W` | Wave-off — hard kill + server cleanup |
 | `K` | Compact — trigger AAR refueling |
 | `X` | Recall — graceful wind-down |

@@ -885,14 +885,18 @@ class PriFlyCommander(App):
         self.push_screen(DeployInputScreen(), callback=_on_dismiss)
 
     def action_resume_selected(self) -> None:
+        """Open a bare Claude session in the worktree — reads progress, asks what's next."""
         pilot = self._get_selected_pilot()
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
-        if pilot.status not in ("RECOVERED", "MAYDAY", "IDLE", "QUEUED"):
-            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — can't resume", "error")
+        if not pilot.worktree_path:
+            self._add_radio("PRI-FLY", f"{pilot.callsign} has no worktree", "error")
             return
-        self._dispatcher.cmd_resume([pilot.callsign])
+        if pilot.callsign in self._iterm_panes:
+            self._add_radio("PRI-FLY", f"{pilot.callsign} already has an active pane", "error")
+            return
+        self._iterm_bridge.resume_agent_pane(pilot)
 
     def action_waveoff_selected(self) -> None:
         pilot = self._get_selected_pilot()
@@ -996,6 +1000,61 @@ class PriFlyCommander(App):
                     self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
                     _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
 
+    # ── Pipeline handoff ──────────────────────────────────────────
+
+    def _check_pipeline_handoff(self, recovered_pilot) -> None:
+        """When a pilot lands RECOVERED, check if there's a next mission in the pipeline.
+
+        If found, auto-deploy the next stage with context from the completed agent's
+        progress.md and worktree. The filesystem is the message bus.
+        """
+        tid = recovered_pilot.ticket_id
+        next_mission = self._mission_queue.next_in_pipeline(tid)
+        if not next_mission:
+            return
+
+        # Build handoff context from the recovered agent's artifacts
+        prev_worktree = recovered_pilot.worktree_path or ""
+        progress_context = ""
+        if prev_worktree:
+            progress_file = Path(prev_worktree) / ".sortie" / "progress.md"
+            try:
+                if progress_file.exists():
+                    progress_context = progress_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                pass
+
+        # Enrich the next mission's directive with handoff context
+        handoff_header = (
+            f"## Pipeline Handoff — Stage {next_mission.pipeline_seq}\n\n"
+            f"Previous agent ({recovered_pilot.callsign}) completed stage {next_mission.pipeline_seq - 1} "
+            f"on ticket {tid}.\n"
+        )
+        if prev_worktree:
+            handoff_header += f"Previous worktree: {prev_worktree}\n"
+        if progress_context:
+            handoff_header += (
+                f"\n### Previous Agent's Progress\n"
+                f"```\n{progress_context[:2000]}\n```\n\n"
+            )
+        handoff_header += "---\n\n"
+
+        next_mission.spec_content = handoff_header + next_mission.spec_content
+        next_mission.prev_worktree = prev_worktree
+        next_mission.status = "DEPLOYING"
+
+        # Deploy via the dispatcher
+        self._add_radio(
+            "PRI-FLY",
+            f"HANDOFF — {recovered_pilot.callsign} landed, deploying stage {next_mission.pipeline_seq}: {next_mission.title}",
+            "success",
+        )
+        _play_sound("recovered")
+        _notify("USS TENKARA — HANDOFF", f"Stage {next_mission.pipeline_seq}: {next_mission.title}")
+
+        deploy_args = [next_mission.id, "--model", next_mission.model]
+        self._dispatcher.cmd_deploy(deploy_args)
+
     # ── Tower heartbeat ─────────────────────────────────────────────
 
     def _write_heartbeat(self) -> None:
@@ -1054,6 +1113,10 @@ class PriFlyCommander(App):
                 if new_status != old_status:
                     pilot.status = new_status
                     self._add_radio(pilot.callsign, f"{old_status} → {new_status}", "system")
+
+                    # Pipeline handoff — auto-deploy next mission when agent lands
+                    if new_status == "RECOVERED" and pilot.ticket_id:
+                        self._check_pipeline_handoff(pilot)
 
                     # Haiku narrator — explain the transition (async, non-blocking)
                     import threading

@@ -248,6 +248,12 @@ class AgentEventHandler:
             ctx._add_radio(callsign, "TRAP — RECOVERED. Mission complete.", "success")
             _notify("USS TENKARA — RECOVERED", f"{callsign} mission complete")
 
+            # Pipeline handoff — check if there's a next stage to deploy
+            try:
+                ctx._check_pipeline_handoff(pilot)
+            except Exception as e:
+                log.warning("Pipeline handoff error for %s: %s", callsign, e)
+
             # Check if entire squadron is recovered
             squadron_pilots = ctx._roster.get_squadron(pilot.squadron)
             if squadron_pilots and all(p.status == "RECOVERED" for p in squadron_pilots):

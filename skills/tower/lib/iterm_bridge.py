@@ -252,6 +252,74 @@ class ItermBridge:
         cmd = f"bash '{launch_script}'"
         self.pane_cmd(pilot.callsign, cmd)
 
+    def resume_agent_pane(self, pilot: "Pilot") -> None:
+        """Open a bare Claude session in the worktree — no directive kickoff.
+
+        The agent starts fresh, reads progress.md and git state on its own,
+        and asks for instructions. Used by R (Resume) hotkey.
+        """
+        if pilot.callsign in self.ctx._iterm_panes:
+            return
+
+        worktree_path = pilot.worktree_path
+        if not worktree_path or not Path(worktree_path).exists():
+            self.ctx._add_radio("PRI-FLY", f"{pilot.callsign} has no worktree to resume in", "error")
+            return
+
+        sortie_dir = Path(worktree_path) / ".sortie"
+
+        # Clear stale session-ended from previous run
+        session_ended = sortie_dir / "session-ended"
+        if session_ended.exists():
+            session_ended.unlink()
+
+        # Write a minimal resume script — cd + bare claude, no directive
+        resume_prompt = (
+            f"You are {pilot.callsign}, resuming work on {pilot.ticket_id}"
+            f"{': ' + pilot.mission_title if pilot.mission_title and pilot.mission_title != pilot.ticket_id else ''}. "
+            f"Read .sortie/progress.md and check git status + git log to understand where the previous agent left off. "
+            f"Then report what you find and ask what to do next."
+        )
+        # Escape single quotes for bash
+        resume_prompt_escaped = resume_prompt.replace("'", "'\\''")
+
+        disallowed_file = Path(__file__).resolve().parent.parent / "scripts" / "disallowed-tools.txt"
+        if disallowed_file.exists():
+            disallowed = disallowed_file.read_text().replace("\n", " ").strip()
+        else:
+            disallowed = (
+                "'Bash(git push --force*)' 'Bash(git push -f *)' "
+                "'Bash(git push *--force*)' 'Bash(git push *-f *)' "
+                "'Bash(git branch -D:*)' 'Bash(git branch -d:*)' "
+                "'Bash(git branch --delete:*)' 'Bash(git clean:*)' "
+                "'Bash(git reset --hard:*)' 'Bash(git checkout -- :*)' "
+                "'Bash(git restore:*)' 'Bash(rm:*)' 'Bash(rm )' "
+                "'Bash(rmdir:*)' 'Bash(unlink:*)' 'Bash(trash:*)' "
+                "'Bash(sudo:*)' 'Bash(chmod:*)' 'Bash(chown:*)'"
+            )
+
+        resume_script = sortie_dir / "resume.sh"
+        resume_script.write_text(
+            f"#!/usr/bin/env bash\n"
+            f"cd '{worktree_path}'\n\n"
+            f"# Cleanup on exit — signal session ended\n"
+            f"cleanup_flight() {{\n"
+            f"  touch .sortie/session-ended\n"
+            f"}}\n"
+            f"trap cleanup_flight EXIT\n\n"
+            f"claude --model {pilot.model} '{resume_prompt_escaped}' "
+            f"--disallowedTools {disallowed}\n"
+        )
+        resume_script.chmod(0o755)
+
+        pilot.status = "IDLE"
+        pilot.launched_at = time_mod.time()
+        self.ctx._watch_agent_jsonl(str(worktree_path))
+
+        cmd = f"bash '{resume_script}'"
+        self.pane_cmd(pilot.callsign, cmd)
+        self.ctx._add_radio(pilot.callsign, f"RESUME — open session in {pilot.ticket_id} worktree", "success")
+
     def pane_cmd(self, callsign: str, cmd: str) -> None:
         """Run a command in the Pit Boss iTerm2 window (shared pane layout)."""
         try:

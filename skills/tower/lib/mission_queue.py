@@ -24,6 +24,11 @@ class Mission:
     created_at: float = 0.0
     started_at: float = 0.0
     completed_at: float = 0.0
+    # Pipeline support — chain missions sequentially
+    pipeline_id: str = ""       # shared ID across all missions in a pipeline
+    pipeline_seq: int = 0       # order within pipeline (0, 1, 2, ...)
+    next_mission_id: str = ""   # explicit next mission to deploy on RECOVERED
+    prev_worktree: str = ""     # worktree of the previous stage (for context handoff)
 
 
 def parse_spec_file(path: str) -> dict:
@@ -166,6 +171,32 @@ class MissionQueue:
     def all_missions(self) -> List[Mission]:
         return list(self._missions.values())
 
+    def next_in_pipeline(self, completed_mission_id: str) -> Optional[Mission]:
+        """Get the next QUEUED mission in a pipeline after the given mission completes."""
+        completed = self._missions.get(completed_mission_id)
+        if not completed:
+            return None
+
+        # Explicit next_mission_id takes priority
+        if completed.next_mission_id:
+            nxt = self._missions.get(completed.next_mission_id)
+            if nxt and nxt.status == "QUEUED":
+                return nxt
+
+        # Fall back to pipeline_id + sequence ordering
+        if completed.pipeline_id:
+            pipeline_missions = [
+                m for m in self._missions.values()
+                if m.pipeline_id == completed.pipeline_id
+                and m.status == "QUEUED"
+                and m.pipeline_seq > completed.pipeline_seq
+            ]
+            if pipeline_missions:
+                pipeline_missions.sort(key=lambda m: m.pipeline_seq)
+                return pipeline_missions[0]
+
+        return None
+
     # ------------------------------------------------------------------
     # Auto-deploy
     # ------------------------------------------------------------------
@@ -238,6 +269,9 @@ class MissionQueue:
                 spec_content=data.get("directive", ""),
                 branch_name=data.get("branch_name", ""),
                 created_at=data.get("created_at", time.time()),
+                pipeline_id=data.get("pipeline_id", ""),
+                pipeline_seq=data.get("pipeline_seq", 0),
+                next_mission_id=data.get("next_mission_id", ""),
             )
             self.add(mission)
             added += 1
