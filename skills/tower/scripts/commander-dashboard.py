@@ -1036,7 +1036,7 @@ class PriFlyCommander(App):
         if not self._mission_queue.seq_complete(mission.pipeline_id, mission.pipeline_seq):
             remaining = [
                 m for m in self._mission_queue.siblings_at_seq(mission.pipeline_id, mission.pipeline_seq)
-                if m.status not in ("COMPLETE", "DEPLOYED")
+                if m.status not in ("COMPLETE", "DEPLOYED", "FAILED")
             ]
             names = ", ".join(m.id for m in remaining)
             self._add_radio(
@@ -1045,6 +1045,43 @@ class PriFlyCommander(App):
                 "system",
             )
             return
+
+        # ── Step 2b: Check for failures + apply on_failure policy ────
+        failures = self._mission_queue.seq_has_failures(mission.pipeline_id, mission.pipeline_seq)
+        if failures:
+            # Determine policy from the pipeline (use first mission's on_failure as pipeline default)
+            all_at_seq = self._mission_queue.siblings_at_seq(mission.pipeline_id, mission.pipeline_seq)
+            policy = all_at_seq[0].on_failure if all_at_seq else "abort"
+
+            failed_names = ", ".join(f.id for f in failures)
+
+            if policy == "abort":
+                self._add_radio(
+                    "PRI-FLY",
+                    f"PIPELINE ABORT — {failed_names} failed at seq {mission.pipeline_seq}",
+                    "error",
+                )
+                _play_sound("mayday")
+                # Compensating transaction: revert merge commits from this seq
+                self._compensate_failed_seq(mission.pipeline_id, mission.pipeline_seq)
+                self._save_pipeline_state(mission.pipeline_id)
+                return
+
+            elif policy == "retry":
+                # Re-queue the failed missions for another attempt
+                for f in failures:
+                    f.status = "QUEUED"
+                    self._add_radio("PRI-FLY", f"RETRY — re-queuing {f.id}", "system")
+                self._save_pipeline_state(mission.pipeline_id)
+                return  # Will re-deploy on next check cycle
+
+            elif policy == "continue":
+                self._add_radio(
+                    "PRI-FLY",
+                    f"CONTINUING — {failed_names} failed but on_failure=continue, proceeding to next seq",
+                    "system",
+                )
+                # Fall through to deploy next seq with partial results
 
         self._add_radio(
             "PRI-FLY",
@@ -1061,6 +1098,7 @@ class PriFlyCommander(App):
             self._add_radio("PRI-FLY", f"PIPELINE COMPLETE — {mission.pipeline_id}", "success")
             _play_sound("squadron_complete")
             _notify("USS TENKARA", f"Pipeline {mission.pipeline_id} complete")
+            self._save_pipeline_state(mission.pipeline_id)
             return
 
         # Build handoff context from all completed agents at current seq
@@ -1071,6 +1109,12 @@ class PriFlyCommander(App):
                 f"## Pipeline Handoff — Stage {next_mission.pipeline_seq}\n\n"
                 f"All agents at stage {mission.pipeline_seq} are complete.\n"
             )
+            if failures and mission.on_failure == "continue":
+                failed_names = ", ".join(f.id for f in failures)
+                handoff_header += (
+                    f"\n**WARNING:** The following agents at the previous stage FAILED: {failed_names}\n"
+                    f"Their work may be incomplete. Check carefully before building on it.\n"
+                )
             if progress_context:
                 handoff_header += (
                     f"\n### Previous Stage Progress\n"
@@ -1207,6 +1251,74 @@ class PriFlyCommander(App):
             )
         except OSError as e:
             log.warning("Failed to write pull signal for %s: %s", target_pilot.callsign, e)
+
+    def _compensate_failed_seq(self, pipeline_id: str, seq: int) -> None:
+        """Compensating transaction: revert merge commits from failed pipeline seq.
+
+        When on_failure=abort and a seq has failures, we revert any merge commits
+        that siblings at this seq made to the parent branch. This prevents partial
+        work from contaminating the parent.
+
+        Inspired by the saga pattern — each step has a compensating action.
+        """
+        import subprocess as _sp
+
+        # Find the parent ticket for this pipeline
+        missions_at_seq = self._mission_queue.siblings_at_seq(pipeline_id, seq)
+        parent_ticket = ""
+        for m in missions_at_seq:
+            if m.parent_ticket:
+                parent_ticket = m.parent_ticket
+                break
+        if not parent_ticket:
+            return  # No parent — nothing to revert
+
+        parent_pilots = self._roster.get_by_ticket(parent_ticket)
+        parent_pilot = parent_pilots[0] if parent_pilots else None
+        merge_cwd = parent_pilot.worktree_path if parent_pilot and parent_pilot.worktree_path else self._project_dir
+
+        # Find completed (merged) missions at this seq — those are the ones to revert
+        completed = [m for m in missions_at_seq if m.status == "COMPLETE"]
+        if not completed:
+            return  # Nothing was merged, nothing to revert
+
+        # Revert the merge commits (most recent first)
+        # Each merge commit message contains the callsign, so we can find them
+        for m in reversed(completed):
+            pilots = self._roster.get_by_ticket(m.id)
+            for pilot in pilots:
+                try:
+                    # Find the merge commit by message pattern
+                    result = _sp.run(
+                        ["git", "log", "--oneline", "--grep",
+                         f"Merge {pilot.callsign}", "-1", "--format=%H"],
+                        capture_output=True, text=True, timeout=10,
+                        cwd=merge_cwd,
+                    )
+                    commit_hash = result.stdout.strip()
+                    if not commit_hash:
+                        continue
+
+                    # Revert it
+                    revert_result = _sp.run(
+                        ["git", "revert", "--no-edit", "-m", "1", commit_hash],
+                        capture_output=True, text=True, timeout=30,
+                        cwd=merge_cwd,
+                    )
+                    if revert_result.returncode == 0:
+                        self._add_radio(
+                            "PRI-FLY",
+                            f"REVERTED — {pilot.callsign} merge undone on parent branch",
+                            "system",
+                        )
+                    else:
+                        self._add_radio(
+                            "PRI-FLY",
+                            f"REVERT FAILED — {pilot.callsign}: {revert_result.stderr[:80]}",
+                            "error",
+                        )
+                except Exception as e:
+                    self._add_radio("PRI-FLY", f"Revert error for {pilot.callsign}: {e}", "error")
 
     def _gather_seq_progress(self, pipeline_id: str, seq: int) -> str:
         """Gather progress.md content from all agents at a given pipeline seq."""
@@ -1389,6 +1501,13 @@ class PriFlyCommander(App):
                     # Pipeline handoff — auto-deploy next mission when agent lands
                     if new_status == "RECOVERED" and pilot.ticket_id:
                         self._check_pipeline_handoff(pilot)
+
+                    # Pipeline failure — mark mission FAILED, trigger on_failure policy
+                    if new_status == "MAYDAY" and pilot.ticket_id:
+                        pipeline_mission = self._mission_queue.get(pilot.ticket_id)
+                        if pipeline_mission and pipeline_mission.pipeline_id:
+                            self._mission_queue.fail_mission(pilot.ticket_id)
+                            self._check_pipeline_handoff(pilot)
 
                     # Haiku narrator — explain the transition (async, non-blocking)
                     import threading

@@ -218,7 +218,7 @@ class MissionQueue:
         ]
 
     def seq_complete(self, pipeline_id: str, seq: int) -> bool:
-        """Check if all missions at the given pipeline seq are COMPLETE or RECOVERED-equivalent."""
+        """Check if all missions at the given pipeline seq are terminal (done or failed)."""
         at_seq = [
             m for m in self._missions.values()
             if m.pipeline_id == pipeline_id
@@ -226,7 +226,23 @@ class MissionQueue:
         ]
         if not at_seq:
             return True
-        return all(m.status in ("COMPLETE", "DEPLOYED") for m in at_seq)
+        return all(m.status in ("COMPLETE", "DEPLOYED", "FAILED") for m in at_seq)
+
+    def seq_has_failures(self, pipeline_id: str, seq: int) -> list:
+        """Get failed missions at the given seq."""
+        return [
+            m for m in self._missions.values()
+            if m.pipeline_id == pipeline_id
+            and m.pipeline_seq == seq
+            and m.status == "FAILED"
+        ]
+
+    def fail_mission(self, mission_id: str) -> None:
+        """Mark a mission as FAILED."""
+        mission = self._missions.get(mission_id)
+        if mission:
+            mission.status = "FAILED"
+            mission.completed_at = time.time()
 
     def siblings_at_seq(self, pipeline_id: str, seq: int) -> List[Mission]:
         """Get all missions at the same pipeline seq (siblings for fan-out)."""

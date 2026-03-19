@@ -272,4 +272,13 @@ class AgentEventHandler:
             ctx._add_radio(callsign, f"MAYDAY — process exited with code {return_code}", "error")
             _notify("USS TENKARA — MAYDAY", f"{callsign} pilot ejected (exit {return_code})")
 
+            # Pipeline failure — mark mission FAILED, trigger on_failure policy
+            try:
+                pipeline_mission = ctx._mission_queue.get(pilot.ticket_id)
+                if pipeline_mission and pipeline_mission.pipeline_id:
+                    ctx._mission_queue.fail_mission(pilot.ticket_id)
+                    ctx._check_pipeline_handoff(pilot)
+            except Exception as e:
+                log.warning("Pipeline failure handling error for %s: %s", callsign, e)
+
         ctx._refresh_ui()
