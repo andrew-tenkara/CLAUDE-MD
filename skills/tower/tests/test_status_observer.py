@@ -105,6 +105,18 @@ class TestDeriveStatus(unittest.TestCase):
         with p1, p2:
             assert derive_status(self.tmpdir, current_status="AIRBORNE") == "MAYDAY"
 
+    def test_warm_jsonl_on_approach_goes_idle(self):
+        """JSONL 60s old, was ON_APPROACH (from previous session) → IDLE."""
+        p1, p2 = _patch_evidence(jsonl_age=60.0)
+        with p1, p2:
+            assert derive_status(self.tmpdir, current_status="ON_APPROACH") == "IDLE"
+
+    def test_stale_jsonl_on_approach_goes_idle(self):
+        """JSONL 300s old, was ON_APPROACH → IDLE (previous session leftover)."""
+        p1, p2 = _patch_evidence(jsonl_age=300.0)
+        with p1, p2:
+            assert derive_status(self.tmpdir, current_status="ON_APPROACH") == "IDLE"
+
     def test_fresh_jsonl_with_mixed_tools_returns_airborne(self):
         """Write tool present among reads → AIRBORNE."""
         events = [

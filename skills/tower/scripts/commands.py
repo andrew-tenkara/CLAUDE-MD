@@ -395,11 +395,15 @@ class CommandDispatcher:
         else:
             self.trigger_compact(target)
 
-    def _launch_agent(self, pilot, directive: str) -> None:
-        """Launch an agent via SDK (if available) or iTerm2 pane (fallback)."""
+    def _launch_agent(self, pilot, directive: str, headless: bool = False) -> None:
+        """Launch an agent in an iTerm2 pane (default) or headless via SDK.
+
+        User-initiated deploys (R/D keys) always open iTerm panes so the user
+        gets the visual session. SDK headless mode is only for background agents
+        (analyst, auto-compact, etc.) — pass headless=True explicitly.
+        """
         ctx = self.ctx
-        if ctx._sdk_enabled and ctx._sdk_mgr and pilot.worktree_path:
-            # SDK path — in-process agent
+        if headless and ctx._sdk_enabled and ctx._sdk_mgr and pilot.worktree_path:
             disallowed = [
                 "Bash(git push --force*)", "Bash(git push -f *)",
                 "Bash(git reset --hard*)", "Bash(rm *)", "Bash(sudo *)",
@@ -411,9 +415,8 @@ class CommandDispatcher:
                 directive=directive,
                 disallowed_tools=disallowed,
             )
-            ctx._add_radio(pilot.callsign, "SDK agent launched — in-process", "success")
+            ctx._add_radio(pilot.callsign, "SDK agent launched — headless", "success")
         else:
-            # Legacy path — iTerm2 pane
             ctx._open_agent_pane(pilot)
 
     def trigger_compact(self, callsign: str) -> None:

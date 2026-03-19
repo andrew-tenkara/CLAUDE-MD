@@ -687,23 +687,28 @@ def refresh_board_table(ctx) -> None:
         if pilot.error_count > 0:
             tools.append(f" {pilot.error_count}\u2717", style="bold red")
 
-        # Mission
+        # Mission — build multi-line cell, track lines for dynamic row height
         mission = Text()
         mission.append(f"{pilot.ticket_id}", style="bold")
-        # Show title if different from ticket ID, truncated
+        mission_lines = 1
+
         title = pilot.mission_title
         if title and title != pilot.ticket_id and title not in ("Unknown", "unknown"):
-            # Clean up title — strip ticket ID prefix if present
             clean_title = title.replace(f"[{pilot.ticket_id}] ", "").replace(f"{pilot.ticket_id}: ", "")
             if clean_title:
-                mission.append(f"\n{clean_title[:45]}", style="grey70")
+                mission.append(f"\n{clean_title[:50]}", style="grey70")
+                mission_lines += 1
         if pilot.flight_phase:
-            mission.append(f"\n\u00bb {pilot.flight_phase[:40]}", style="italic cyan")
+            mission.append(f"\n\u00bb {pilot.flight_phase[:45]}", style="italic cyan")
+            mission_lines += 1
         if pilot.status_hint:
-            # Only show server URLs, not full paths
             hint = pilot.status_hint
             if "localhost:" in hint or "127.0.0.1:" in hint:
                 mission.append(f"\n\u26a1 {hint}", style="bold cyan")
+                mission_lines += 1
+
+        # Dynamic row height — minimum 2, grows with content
+        row_height = max(2, mission_lines)
 
         table.add_row(
             cs,
@@ -713,7 +718,7 @@ def refresh_board_table(ctx) -> None:
             bar,
             Text(time_str, style="grey70"),
             tools,
-            height=2,
+            height=row_height,
         )
 
     # Restore cursor by callsign (stable even when pilots are added/removed)

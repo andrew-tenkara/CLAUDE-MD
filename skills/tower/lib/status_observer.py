@@ -191,11 +191,16 @@ def derive_status(worktree_path: str, current_status: str = "") -> str:
         # JSONL is warm but not hot — agent is pausing
         if current_status == "AIRBORNE":
             return "ON_APPROACH"  # starting to wind down
+        # Don't inherit ON_APPROACH from a previous session — if we never
+        # saw this agent AIRBORNE in the current Tower session, it's IDLE
+        if current_status == "ON_APPROACH":
+            return "IDLE"
         return current_status or "IDLE"
 
-    # JSONL is stale — agent stopped producing events
-    if current_status in ("AIRBORNE", "ON_APPROACH"):
-        return "ON_APPROACH"  # heading home
+    # JSONL is stale — agent stopped producing events long ago
+    if current_status == "AIRBORNE":
+        return "ON_APPROACH"  # was active this session, winding down
+    # Stale JSONL + not currently AIRBORNE = previous session leftover
     return "IDLE"
 
 
