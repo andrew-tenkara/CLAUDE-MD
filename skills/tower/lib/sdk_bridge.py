@@ -40,9 +40,30 @@ except ImportError:
     pass
 
 
+def _has_api_key() -> bool:
+    """Check if an Anthropic API key is available (required for SDK).
+
+    The Agent SDK with subscription OAuth tokens is a ToS violation per
+    Anthropic's Feb 19 2026 legal docs. We only allow SDK usage with an
+    explicit API key.
+    """
+    import os
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return True
+    try:
+        key_file = Path.home() / ".config" / "anthropic" / "api_key"
+        return key_file.exists() and len(key_file.read_text().strip()) > 0
+    except OSError:
+        return False
+
+
 def sdk_available() -> bool:
-    """Check if the Claude Agent SDK is importable."""
-    return _sdk_available
+    """Check if the Claude Agent SDK is usable.
+
+    Requires BOTH the SDK package AND an API key. Using the SDK with
+    subscription OAuth is explicitly banned by Anthropic's ToS.
+    """
+    return _sdk_available and _has_api_key()
 
 
 # ── Event types for TUI consumption ─────────────────────────────────
@@ -428,7 +449,17 @@ class SdkAgentManager:
         disallowed_tools: list[str] | None = None,
         max_budget_usd: float | None = None,
     ) -> SdkAgent:
-        """Spawn a new SDK agent."""
+        """Spawn a new SDK agent. Requires an API key (not subscription OAuth).
+
+        Raises RuntimeError if no API key is configured — using the Agent SDK
+        with subscription OAuth tokens violates Anthropic's Consumer ToS.
+        """
+        if not _has_api_key():
+            raise RuntimeError(
+                "Agent SDK requires an API key (ANTHROPIC_API_KEY or ~/.config/anthropic/api_key). "
+                "Using subscription OAuth with the SDK violates Anthropic's ToS. "
+                "Get a key at https://console.anthropic.com"
+            )
         agent = SdkAgent(
             callsign=callsign,
             model=model,
