@@ -13,6 +13,10 @@ Nothing writes pilot.status except derive_status(). The JSONL is the
 heartbeat. The session-ended file is the death certificate. This
 function reads them and decides.
 
+Each Tower session starts fresh — no agent continuity across restarts.
+Stale evidence from previous sessions is ignored. Only fresh JSONL
+(< 30s old) can promote a pilot out of IDLE.
+
 Optional Haiku narrator: observes transitions and explains them in
 human terms via radio chatter. Informational, not authoritative.
 """
@@ -36,7 +40,6 @@ def _jsonl_age(worktree_path: str) -> Optional[float]:
     Returns None if no JSONL file found.
     """
     try:
-        # Import here to avoid circular deps
         from parse_jsonl_metrics import find_latest_session_file
         jsonl = find_latest_session_file(worktree_path)
         if jsonl and jsonl.exists():
@@ -61,13 +64,10 @@ def _tail_jsonl_events(worktree_path: str, n: int = 10) -> list[dict]:
         jsonl = find_latest_session_file(worktree_path)
         if not jsonl or not jsonl.exists():
             return []
-        # Read last N lines efficiently
         lines = []
         with open(jsonl, "rb") as f:
-            # Seek to end, read backwards
             f.seek(0, 2)
             size = f.tell()
-            # Read last 50KB max
             read_size = min(size, 50_000)
             f.seek(max(0, size - read_size))
             raw = f.read().decode("utf-8", errors="replace")
@@ -125,10 +125,8 @@ def _read_command_override(worktree_path: str) -> Optional[str]:
 
 # ── Core status derivation ───────────────────────────────────────────
 
-# Thresholds
-JSONL_ACTIVE_SECS = 30      # JSONL modified within this → agent is alive
-JSONL_IDLE_SECS = 120       # JSONL older than this → agent is idle/stalled
-ON_APPROACH_SECS = 300      # No write tools for this long while alive → wrapping up
+# Fresh threshold — JSONL modified within this many seconds = agent is alive
+JSONL_FRESH_SECS = 30
 
 
 def derive_status(worktree_path: str, current_status: str = "") -> str:
@@ -137,16 +135,19 @@ def derive_status(worktree_path: str, current_status: str = "") -> str:
     This is the single source of truth for status. Called once per pilot
     per refresh cycle. Nothing else should write pilot.status.
 
+    Each Tower session starts fresh. Stale JSONL from previous sessions
+    is treated the same as no JSONL — the pilot stays IDLE until fresh
+    evidence proves otherwise.
+
     Priority:
       1. command.json override (XO escape hatch, consumed on read)
       2. session-ended file (terminal — agent exited)
-      3. JSONL evidence (heartbeat + content)
-      4. No evidence → maintain current status or IDLE
+      3. Fresh JSONL (< 30s) → AIRBORNE or PREFLIGHT
+      4. Everything else → IDLE (or stay AIRBORNE if already live)
     """
     if not worktree_path:
         return current_status or "IDLE"
 
-    # Resolve to absolute
     wt = worktree_path
 
     # 1. Command override — XO can force any status (escape hatch)
@@ -161,46 +162,38 @@ def derive_status(worktree_path: str, current_status: str = "") -> str:
     # 3. JSONL evidence — the heartbeat
     age = _jsonl_age(wt)
 
+    # No JSONL at all — never started or file deleted
     if age is None:
-        # No JSONL at all — agent hasn't started writing yet
-        if current_status in ("AIRBORNE", "ON_APPROACH"):
-            # Was active but JSONL disappeared — something went wrong
-            return "MAYDAY"
-        return current_status or "IDLE"
+        if current_status == "AIRBORNE":
+            return "MAYDAY"  # was live but JSONL vanished — crash
+        return "IDLE"
 
-    if age < JSONL_ACTIVE_SECS:
-        # JSONL is fresh — agent is alive
+    if age < JSONL_FRESH_SECS:
+        # JSONL is fresh — agent is alive right now
         events = _tail_jsonl_events(wt, n=15)
 
         if _has_write_tools(events):
-            return "AIRBORNE"  # actively writing code
+            return "AIRBORNE"
 
         if _has_any_tools(events):
-            # Using tools but not writing — reading, searching, planning
             if current_status == "AIRBORNE":
-                # Was writing, now just reading — might be wrapping up
                 return "AIRBORNE"  # stay airborne, don't flicker
             return "PREFLIGHT"
 
-        # JSONL fresh but no tool calls in last 15 events — thinking/responding
+        # Fresh JSONL but no tool calls — thinking/responding
         if current_status == "AIRBORNE":
             return "AIRBORNE"  # stay airborne through thinking pauses
         return "PREFLIGHT"
 
-    if age < JSONL_IDLE_SECS:
-        # JSONL is warm but not hot — agent is pausing
-        if current_status == "AIRBORNE":
-            return "ON_APPROACH"  # starting to wind down
-        # Don't inherit ON_APPROACH from a previous session — if we never
-        # saw this agent AIRBORNE in the current Tower session, it's IDLE
-        if current_status == "ON_APPROACH":
-            return "IDLE"
-        return current_status or "IDLE"
-
-    # JSONL is stale — agent stopped producing events long ago
+    # 4. No fresh evidence — not actively running right now
     if current_status == "AIRBORNE":
-        return "ON_APPROACH"  # was active this session, winding down
-    # Stale JSONL + not currently AIRBORNE = previous session leftover
+        # Was live this session but JSONL went quiet → winding down
+        return "ON_APPROACH"
+    if current_status == "ON_APPROACH":
+        # Already winding down, still no fresh evidence → stay on approach
+        # (will eventually get session-ended → RECOVERED, or user dismisses)
+        return "ON_APPROACH"
+
     return "IDLE"
 
 
@@ -229,7 +222,6 @@ def narrate_transition(
     except ImportError:
         return None
 
-    # Get recent events for context
     events = _tail_jsonl_events(worktree_path, n=5)
     event_summary = []
     for evt in events:
