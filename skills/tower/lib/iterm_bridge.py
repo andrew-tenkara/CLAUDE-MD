@@ -144,6 +144,14 @@ class ItermBridge:
             '```json\n{"dev": 3001, "bullboard": 4502, "timestamp": 1710345600}\n```\n'
             "Include any port your worktree is serving on. The TUI reads this to show server URLs on the board "
             "and the O key opens them in the browser. Update the file whenever a new server starts or a port changes.\n"
+            "\n"
+            "## Sibling Coordination (pull-parent protocol)\n"
+            "If you see a file at `.sortie/pull-parent.json`, a sibling agent has merged their work "
+            "into the parent branch. Read the file for details, then:\n"
+            "1. Run `git pull origin <branch>` (branch is in the JSON file)\n"
+            "2. Resolve any merge conflicts\n"
+            "3. Delete `.sortie/pull-parent.json`\n"
+            "4. Continue your work with the updated code\n"
         )
         (sortie_dir / "directive.md").write_text(pilot.directive + flight_protocol)
 

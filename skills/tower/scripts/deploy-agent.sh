@@ -139,6 +139,14 @@ NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 If asked to do something outside your role, say:
 "That's Mini Boss territory — I'm a pilot, not an orchestrator. Talk to Mini Boss for coordination/triage, or handle it from Pri-Fly."
 Stay in your lane. Do your mission. Do it well.
+
+## Sibling Coordination (pull-parent protocol)
+If you see a file at .sortie/pull-parent.json, a sibling agent has merged their work
+into the parent branch. Read the file for details, then:
+1. Run: git pull origin <branch from the file>
+2. Resolve any merge conflicts
+3. Delete .sortie/pull-parent.json
+4. Continue your work with the updated code
 DIRECTIVE_EOF
 fi
 

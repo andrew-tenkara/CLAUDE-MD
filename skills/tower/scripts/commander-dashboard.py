@@ -1003,57 +1003,200 @@ class PriFlyCommander(App):
     # ── Pipeline handoff ──────────────────────────────────────────
 
     def _check_pipeline_handoff(self, recovered_pilot) -> None:
-        """When a pilot lands RECOVERED, check if there's a next mission in the pipeline.
+        """When a pilot lands RECOVERED, handle merge-back + pipeline progression.
 
-        If found, auto-deploy the next stage with context from the completed agent's
-        progress.md and worktree. The filesystem is the message bus.
+        Three things happen:
+        1. If sub-agent: merge their branch back to parent, notify siblings
+        2. If all agents at this pipeline_seq are done (fan-in): deploy next seq
+        3. Next seq may be a single mission (sequential) or multiple (fan-out)
         """
+        import threading
+
         tid = recovered_pilot.ticket_id
-        next_mission = self._mission_queue.next_in_pipeline(tid)
-        if not next_mission:
+        mission = self._mission_queue.get(tid)
+        if not mission or not mission.pipeline_id:
             return
 
-        # Build handoff context from the recovered agent's artifacts
-        prev_worktree = recovered_pilot.worktree_path or ""
-        progress_context = ""
-        if prev_worktree:
-            progress_file = Path(prev_worktree) / ".sortie" / "progress.md"
-            try:
-                if progress_file.exists():
-                    progress_context = progress_file.read_text(encoding="utf-8").strip()
-            except OSError:
-                pass
+        # Mark this mission complete
+        self._mission_queue.mark_complete(tid)
 
-        # Enrich the next mission's directive with handoff context
-        handoff_header = (
-            f"## Pipeline Handoff — Stage {next_mission.pipeline_seq}\n\n"
-            f"Previous agent ({recovered_pilot.callsign}) completed stage {next_mission.pipeline_seq - 1} "
-            f"on ticket {tid}.\n"
-        )
-        if prev_worktree:
-            handoff_header += f"Previous worktree: {prev_worktree}\n"
-        if progress_context:
-            handoff_header += (
-                f"\n### Previous Agent's Progress\n"
-                f"```\n{progress_context[:2000]}\n```\n\n"
+        # ── Step 1: Merge-back + sibling notification (fan-out) ──────
+        if mission.parent_ticket and recovered_pilot.worktree_path:
+            self._merge_back_to_parent(recovered_pilot, mission)
+
+        # ── Step 2: Fan-in gate — are all siblings at this seq done? ──
+        if not self._mission_queue.seq_complete(mission.pipeline_id, mission.pipeline_seq):
+            remaining = [
+                m for m in self._mission_queue.siblings_at_seq(mission.pipeline_id, mission.pipeline_seq)
+                if m.status not in ("COMPLETE", "DEPLOYED")
+            ]
+            names = ", ".join(m.id for m in remaining)
+            self._add_radio(
+                "PRI-FLY",
+                f"HOLDING — waiting for siblings at seq {mission.pipeline_seq}: {names}",
+                "system",
             )
-        handoff_header += "---\n\n"
+            return
 
-        next_mission.spec_content = handoff_header + next_mission.spec_content
-        next_mission.prev_worktree = prev_worktree
-        next_mission.status = "DEPLOYING"
-
-        # Deploy via the dispatcher
         self._add_radio(
             "PRI-FLY",
-            f"HANDOFF — {recovered_pilot.callsign} landed, deploying stage {next_mission.pipeline_seq}: {next_mission.title}",
+            f"FAN-IN — all agents at seq {mission.pipeline_seq} complete",
             "success",
         )
-        _play_sound("recovered")
-        _notify("USS TENKARA — HANDOFF", f"Stage {next_mission.pipeline_seq}: {next_mission.title}")
 
-        deploy_args = [next_mission.id, "--model", next_mission.model]
-        self._dispatcher.cmd_deploy(deploy_args)
+        # ── Step 3: Deploy next seq (may be 1 mission or many) ───────
+        next_seq_missions = self._mission_queue.ready_to_fan_out(
+            mission.pipeline_id,
+            mission.pipeline_seq + 1,
+        )
+        if not next_seq_missions:
+            self._add_radio("PRI-FLY", f"PIPELINE COMPLETE — {mission.pipeline_id}", "success")
+            _play_sound("squadron_complete")
+            _notify("USS TENKARA", f"Pipeline {mission.pipeline_id} complete")
+            return
+
+        # Build handoff context from all completed agents at current seq
+        progress_context = self._gather_seq_progress(mission.pipeline_id, mission.pipeline_seq)
+
+        for next_mission in next_seq_missions:
+            handoff_header = (
+                f"## Pipeline Handoff — Stage {next_mission.pipeline_seq}\n\n"
+                f"All agents at stage {mission.pipeline_seq} are complete.\n"
+            )
+            if progress_context:
+                handoff_header += (
+                    f"\n### Previous Stage Progress\n"
+                    f"```\n{progress_context[:3000]}\n```\n\n"
+                )
+            handoff_header += "---\n\n"
+
+            next_mission.spec_content = handoff_header + next_mission.spec_content
+            next_mission.status = "DEPLOYING"
+
+            if len(next_seq_missions) > 1:
+                self._add_radio(
+                    "PRI-FLY",
+                    f"FAN-OUT — deploying {next_mission.id} ({next_mission.sub_name or next_mission.title})",
+                    "success",
+                )
+            else:
+                self._add_radio(
+                    "PRI-FLY",
+                    f"HANDOFF — deploying stage {next_mission.pipeline_seq}: {next_mission.title}",
+                    "success",
+                )
+
+            deploy_args = [next_mission.id, "--model", next_mission.model]
+            self._dispatcher.cmd_deploy(deploy_args)
+
+        if len(next_seq_missions) > 1:
+            _play_sound("recovered")
+            _notify("USS TENKARA — FAN-OUT", f"{len(next_seq_missions)} agents deploying at seq {next_seq_missions[0].pipeline_seq}")
+
+    def _merge_back_to_parent(self, recovered_pilot, mission) -> None:
+        """Merge a sub-agent's branch back to the parent ticket's branch.
+
+        After merging, write pull-parent.json to each active sibling's worktree
+        so they know to pull the latest from the parent branch.
+        """
+        import subprocess as _sp
+
+        parent_ticket = mission.parent_ticket
+        parent_pilots = self._roster.get_by_ticket(parent_ticket)
+        parent_pilot = parent_pilots[0] if parent_pilots else None
+        parent_branch = f"sortie/{parent_ticket}"
+
+        sub_branch = recovered_pilot.worktree_path
+        if not sub_branch:
+            return
+
+        # Determine the sub-agent's branch name
+        try:
+            result = _sp.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+                cwd=recovered_pilot.worktree_path,
+            )
+            sub_branch_name = result.stdout.strip()
+        except Exception:
+            self._add_radio("PRI-FLY", f"Could not determine branch for {recovered_pilot.callsign}", "error")
+            return
+
+        # Merge sub-agent's branch into parent branch
+        # Use the parent's worktree if available, otherwise project dir
+        merge_cwd = parent_pilot.worktree_path if parent_pilot and parent_pilot.worktree_path else self._project_dir
+        try:
+            result = _sp.run(
+                ["git", "merge", sub_branch_name, "--no-edit",
+                 "-m", f"Merge {recovered_pilot.callsign} ({sub_branch_name}) into {parent_branch}"],
+                capture_output=True, text=True, timeout=30,
+                cwd=merge_cwd,
+            )
+            if result.returncode == 0:
+                self._add_radio(
+                    "PRI-FLY",
+                    f"MERGED — {recovered_pilot.callsign} → {parent_branch}",
+                    "success",
+                )
+            else:
+                self._add_radio(
+                    "PRI-FLY",
+                    f"MERGE CONFLICT — {recovered_pilot.callsign} → {parent_branch}: {result.stderr[:100]}",
+                    "error",
+                )
+                return  # Don't notify siblings if merge failed
+        except Exception as e:
+            self._add_radio("PRI-FLY", f"Merge failed: {e}", "error")
+            return
+
+        # Notify active siblings via filesystem signal
+        active_sibs = self._mission_queue.active_siblings(
+            mission.pipeline_id, mission.pipeline_seq, exclude_id=mission.id,
+        )
+        for sib_mission in active_sibs:
+            sib_pilots = self._roster.get_by_ticket(sib_mission.id)
+            for sib_pilot in sib_pilots:
+                if sib_pilot.worktree_path and sib_pilot.status == "AIRBORNE":
+                    self._write_pull_signal(sib_pilot, recovered_pilot, parent_branch)
+
+    def _write_pull_signal(self, target_pilot, merged_pilot, parent_branch: str) -> None:
+        """Write pull-parent.json into a sibling's worktree.
+
+        The agent's directive tells it to watch for this file and pull when it appears.
+        """
+        signal_path = Path(target_pilot.worktree_path) / ".sortie" / "pull-parent.json"
+        try:
+            signal_path.write_text(json.dumps({
+                "merged_by": merged_pilot.callsign,
+                "branch": parent_branch,
+                "message": f"{merged_pilot.callsign} merged their work. Run: git pull origin {parent_branch}",
+                "timestamp": int(time_mod.time()),
+            }, indent=2))
+            self._add_radio(
+                target_pilot.callsign,
+                f"PULL SIGNAL — {merged_pilot.callsign} merged, pull from {parent_branch}",
+                "system",
+            )
+        except OSError as e:
+            log.warning("Failed to write pull signal for %s: %s", target_pilot.callsign, e)
+
+    def _gather_seq_progress(self, pipeline_id: str, seq: int) -> str:
+        """Gather progress.md content from all agents at a given pipeline seq."""
+        parts = []
+        for mission in self._mission_queue.siblings_at_seq(pipeline_id, seq):
+            pilots = self._roster.get_by_ticket(mission.id)
+            for pilot in pilots:
+                if pilot.worktree_path:
+                    progress_file = Path(pilot.worktree_path) / ".sortie" / "progress.md"
+                    try:
+                        if progress_file.exists():
+                            content = progress_file.read_text(encoding="utf-8").strip()
+                            if content:
+                                label = mission.sub_name or mission.id
+                                parts.append(f"=== {pilot.callsign} ({label}) ===\n{content}")
+                    except OSError:
+                        pass
+        return "\n\n".join(parts)
 
     # ── Tower heartbeat ─────────────────────────────────────────────
 

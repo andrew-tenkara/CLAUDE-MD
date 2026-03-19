@@ -24,11 +24,13 @@ class Mission:
     created_at: float = 0.0
     started_at: float = 0.0
     completed_at: float = 0.0
-    # Pipeline support — chain missions sequentially
+    # Pipeline support — chain missions sequentially or fan-out concurrently
     pipeline_id: str = ""       # shared ID across all missions in a pipeline
-    pipeline_seq: int = 0       # order within pipeline (0, 1, 2, ...)
+    pipeline_seq: int = 0       # order within pipeline — same seq = concurrent, higher = after
     next_mission_id: str = ""   # explicit next mission to deploy on RECOVERED
     prev_worktree: str = ""     # worktree of the previous stage (for context handoff)
+    parent_ticket: str = ""     # parent ticket ID for sub-agent worktrees (fan-out)
+    sub_name: str = ""          # sub-agent name (e.g., "api", "ui") — empty = not a sub-agent
 
 
 def parse_spec_file(path: str) -> dict:
@@ -172,7 +174,10 @@ class MissionQueue:
         return list(self._missions.values())
 
     def next_in_pipeline(self, completed_mission_id: str) -> Optional[Mission]:
-        """Get the next QUEUED mission in a pipeline after the given mission completes."""
+        """Get the next QUEUED mission in a pipeline after the given mission completes.
+
+        For sequential handoff only. Use ready_to_fan_out() for concurrent stages.
+        """
         completed = self._missions.get(completed_mission_id)
         if not completed:
             return None
@@ -185,17 +190,60 @@ class MissionQueue:
 
         # Fall back to pipeline_id + sequence ordering
         if completed.pipeline_id:
-            pipeline_missions = [
+            # Check if all missions at the completed seq are done
+            if not self.seq_complete(completed.pipeline_id, completed.pipeline_seq):
+                return None  # siblings still running — wait for fan-in
+
+            # All at this seq done — find the next seq
+            next_missions = [
                 m for m in self._missions.values()
                 if m.pipeline_id == completed.pipeline_id
                 and m.status == "QUEUED"
                 and m.pipeline_seq > completed.pipeline_seq
             ]
-            if pipeline_missions:
-                pipeline_missions.sort(key=lambda m: m.pipeline_seq)
-                return pipeline_missions[0]
+            if next_missions:
+                next_missions.sort(key=lambda m: m.pipeline_seq)
+                return next_missions[0]
 
         return None
+
+    def ready_to_fan_out(self, pipeline_id: str, seq: int) -> List[Mission]:
+        """Get ALL QUEUED missions at the given seq for concurrent deployment."""
+        return [
+            m for m in self._missions.values()
+            if m.pipeline_id == pipeline_id
+            and m.pipeline_seq == seq
+            and m.status == "QUEUED"
+        ]
+
+    def seq_complete(self, pipeline_id: str, seq: int) -> bool:
+        """Check if all missions at the given pipeline seq are COMPLETE or RECOVERED-equivalent."""
+        at_seq = [
+            m for m in self._missions.values()
+            if m.pipeline_id == pipeline_id
+            and m.pipeline_seq == seq
+        ]
+        if not at_seq:
+            return True
+        return all(m.status in ("COMPLETE", "DEPLOYED") for m in at_seq)
+
+    def siblings_at_seq(self, pipeline_id: str, seq: int) -> List[Mission]:
+        """Get all missions at the same pipeline seq (siblings for fan-out)."""
+        return [
+            m for m in self._missions.values()
+            if m.pipeline_id == pipeline_id
+            and m.pipeline_seq == seq
+        ]
+
+    def active_siblings(self, pipeline_id: str, seq: int, exclude_id: str = "") -> List[Mission]:
+        """Get still-active siblings at the same seq (for notifications)."""
+        return [
+            m for m in self._missions.values()
+            if m.pipeline_id == pipeline_id
+            and m.pipeline_seq == seq
+            and m.id != exclude_id
+            and m.status in ("ACTIVE", "DEPLOYING")
+        ]
 
     # ------------------------------------------------------------------
     # Auto-deploy
@@ -272,6 +320,8 @@ class MissionQueue:
                 pipeline_id=data.get("pipeline_id", ""),
                 pipeline_seq=data.get("pipeline_seq", 0),
                 next_mission_id=data.get("next_mission_id", ""),
+                parent_ticket=data.get("parent_ticket", ""),
+                sub_name=data.get("sub_name", ""),
             )
             self.add(mission)
             added += 1
