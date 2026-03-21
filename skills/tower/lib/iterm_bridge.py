@@ -127,17 +127,16 @@ class ItermBridge:
             "\n\n---\n"
             "## Flight Status Protocol\n"
             "Report your flight status by writing to `.sortie/flight-status.json`:\n"
-            '```json\n{"status": "AIRBORNE", "phase": "implementing auth refresh", "timestamp": 1710345600}\n```\n'
-            "Valid statuses: PREFLIGHT, AIRBORNE, HOLDING, ON_APPROACH, RECOVERED\n"
+            '```json\n{"status": "IN_FLIGHT", "phase": "implementing auth refresh", "timestamp": 1710345600}\n```\n'
+            "Valid statuses: ON_DECK, IN_FLIGHT, ON_APPROACH\n"
             "Update on meaningful phase transitions only (starting new task area, running tests, "
             "submitting PR, blocked, done). Do NOT update on every tool call.\n"
             "Use unix timestamp (seconds). Phase is a short human-readable description of what you're doing.\n"
-            "PREFLIGHT is set automatically before launch — do not write it yourself.\n"
-            "Write AIRBORNE only when you start actively making changes (editing files, running commands, writing code). "
-            "Reading context, reading tickets, reading files, and planning are all still PREFLIGHT.\n"
-            "Write HOLDING when you are waiting/blocked/idle.\n"
+            "ON_DECK is set automatically before launch — do not write it yourself.\n"
+            "Write IN_FLIGHT when you start actively making changes (editing files, running commands, writing code). "
+            "Reading context, reading tickets, reading files, and planning are all still ON_DECK.\n"
             "NEVER write RECOVERED — that is set automatically when your session ends.\n"
-            "When your mission is complete, write HOLDING with phase 'mission complete — awaiting orders'.\n"
+            "When your mission is complete, write ON_APPROACH with phase 'mission complete — awaiting orders'.\n"
             "\n"
             "## Server Port Protocol\n"
             "If you start any dev server, worker, or dashboard process, write the port to `.sortie/server-ports.json`:\n"
@@ -165,7 +164,7 @@ class ItermBridge:
 
         # Set PREFLIGHT status — agent is on deck, not yet airborne
         (sortie_dir / "flight-status.json").write_text(
-            json.dumps({"status": "PREFLIGHT", "phase": "on deck — pre-launch checks", "timestamp": int(time_mod.time())})
+            json.dumps({"status": "ON_DECK", "phase": "on deck — pre-launch checks", "timestamp": int(time_mod.time())})
         )
 
         # ── Write settings (branch-scoped push permission) ───────────────
@@ -253,7 +252,7 @@ class ItermBridge:
 
         # Store worktree path + set initial preflight state
         pilot.worktree_path = str(worktree_path)
-        pilot.flight_status = "PREFLIGHT"
+        pilot.flight_status = "ON_DECK"
         pilot.flight_phase = "on deck — pre-launch checks"
         self.ctx._watch_agent_jsonl(str(worktree_path))
 
@@ -320,7 +319,7 @@ class ItermBridge:
         )
         resume_script.chmod(0o755)
 
-        pilot.status = "IDLE"
+        pilot.status = "ON_DECK"
         pilot.launched_at = time_mod.time()
         self.ctx._watch_agent_jsonl(str(worktree_path))
 

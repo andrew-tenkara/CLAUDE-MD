@@ -27,7 +27,7 @@ def _mock_compressed():
     }
 
 
-def _make_response(approved=True, final_status="AIRBORNE", phase="coding",
+def _make_response(approved=True, final_status="IN_FLIGHT", phase="coding",
                     confidence=0.9, reason="looks good"):
     """Build a mock Anthropic response with tool_use content."""
     block = MagicMock()
@@ -61,14 +61,14 @@ class TestGracefulDegradation:
     def test_no_api_key_auto_approves(self):
         """No env var, no key file → graceful degradation."""
         with self._no_key_context():
-            result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+            result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
         assert result.approved is True
-        assert result.final_status == "AIRBORNE"
+        assert result.final_status == "IN_FLIGHT"
         assert "no API key" in result.reason
 
     def test_missing_api_key_env(self):
         with self._no_key_context():
-            result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+            result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
         assert result.approved is True
 
     def test_sdk_import_error_auto_approves(self):
@@ -77,7 +77,7 @@ class TestGracefulDegradation:
                 # Force ImportError
                 import importlib
                 with patch("builtins.__import__", side_effect=ImportError("no module")):
-                    result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+                    result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
         assert result.approved is True
 
     def test_api_error_auto_approves(self):
@@ -88,7 +88,7 @@ class TestGracefulDegradation:
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+                result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
         assert result.approved is True
         assert "API error" in result.reason
 
@@ -99,23 +99,23 @@ class TestApproveLogic:
     def test_approved_transition(self):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_response(
-            approved=True, final_status="AIRBORNE", confidence=0.95, reason="first write detected"
+            approved=True, final_status="IN_FLIGHT", confidence=0.95, reason="first write detected"
         )
         mock_anthropic = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("PREFLIGHT", "AIRBORNE", 30.0, _mock_compressed())
+                result = gate_transition("ON_DECK", "IN_FLIGHT", 30.0, _mock_compressed())
 
         assert result.approved is True
-        assert result.final_status == "AIRBORNE"
+        assert result.final_status == "IN_FLIGHT"
         assert result.confidence == 0.95
 
     def test_denied_transition(self):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_response(
-            approved=False, final_status="PREFLIGHT", confidence=0.85,
+            approved=False, final_status="ON_DECK", confidence=0.85,
             reason="reads between writes, not actually idle"
         )
         mock_anthropic = MagicMock()
@@ -123,17 +123,17 @@ class TestApproveLogic:
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("AIRBORNE", "HOLDING", 15.0, _mock_compressed())
+                result = gate_transition("IN_FLIGHT", "ON_DECK", 15.0, _mock_compressed())
 
         assert result.approved is False
         # Denied → final_status stays at current
-        assert result.final_status == "AIRBORNE"
+        assert result.final_status == "IN_FLIGHT"
 
     def test_low_confidence_auto_denied(self):
         """Even if Haiku says approved, confidence < 0.7 → denied."""
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_response(
-            approved=True, final_status="HOLDING", confidence=0.4,
+            approved=True, final_status="ON_DECK", confidence=0.4,
             reason="unsure"
         )
         mock_anthropic = MagicMock()
@@ -141,7 +141,7 @@ class TestApproveLogic:
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("AIRBORNE", "HOLDING", 5.0, _mock_compressed())
+                result = gate_transition("IN_FLIGHT", "ON_DECK", 5.0, _mock_compressed())
 
         assert result.approved is False
         assert result.confidence == 0.4
@@ -150,7 +150,7 @@ class TestApproveLogic:
     def test_confidence_at_threshold_is_approved(self):
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_response(
-            approved=True, final_status="AIRBORNE", confidence=CONFIDENCE_THRESHOLD,
+            approved=True, final_status="IN_FLIGHT", confidence=CONFIDENCE_THRESHOLD,
             reason="exactly at threshold"
         )
         mock_anthropic = MagicMock()
@@ -158,7 +158,7 @@ class TestApproveLogic:
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("PREFLIGHT", "AIRBORNE", 10.0, _mock_compressed())
+                result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
 
         assert result.approved is True
 
@@ -177,7 +177,7 @@ class TestApproveLogic:
 
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-test-123"}):
             with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
-                result = gate_transition("HOLDING", "AIRBORNE", 10.0, _mock_compressed())
+                result = gate_transition("ON_DECK", "IN_FLIGHT", 10.0, _mock_compressed())
 
         assert result.approved is True
         assert "no tool_use" in result.reason
@@ -188,11 +188,11 @@ class TestApproveLogic:
 class TestGateResult:
     def test_fields(self):
         r = GateResult(
-            approved=True, final_status="AIRBORNE",
+            approved=True, final_status="IN_FLIGHT",
             phase="coding", confidence=0.9, reason="looks good"
         )
         assert r.approved is True
-        assert r.final_status == "AIRBORNE"
+        assert r.final_status == "IN_FLIGHT"
         assert r.phase == "coding"
         assert r.confidence == 0.9
         assert r.reason == "looks good"

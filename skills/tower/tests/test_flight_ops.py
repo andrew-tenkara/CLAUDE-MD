@@ -47,37 +47,37 @@ def settle(strip: FlightOpsStrip):
     advance(strip, PHASE_TICKS["ELEVATOR"] + 5)
 
 
-# ── IDLE positioning ─────────────────────────────────────────────────
+# ── ON_DECK positioning ──────────────────────────────────────────────
 
-class TestIdlePositioning(unittest.TestCase):
+class TestOnDeckPositioning(unittest.TestCase):
 
-    def test_idle_initializes_at_elevator(self):
+    def test_on_deck_initializes_at_elevator(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("V-1", "IDLE")])
+        strip.update_pilots([FakePilot("V-1", "ON_DECK")])
         self.assertEqual(strip._sprites["V-1"].phase, "ELEVATOR")
 
-    def test_idle_transitions_to_deck_idle(self):
+    def test_on_deck_transitions_to_deck_idle(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("V-1", "IDLE")])
+        strip.update_pilots([FakePilot("V-1", "ON_DECK")])
         settle(strip)
         self.assertEqual(strip._sprites["V-1"].phase, "DECK_IDLE")
 
-    def test_idle_at_or_past_cat_zone(self):
+    def test_on_deck_at_or_past_cat_zone(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("V-1", "IDLE")])
+        strip.update_pilots([FakePilot("V-1", "ON_DECK")])
         settle(strip)
         cat_start = strip._zone_col("CAT", 0.0)
         self.assertGreaterEqual(strip._sprites["V-1"].col, cat_start)
 
-    def test_idle_separated_from_recovered_sprites(self):
-        """The exact bug from the screenshot: 4 RECOVERED + 1 IDLE."""
+    def test_on_deck_separated_from_recovered_sprites(self):
+        """The exact bug from the screenshot: 4 RECOVERED + 1 ON_DECK."""
         strip = make_strip()
         pilots = [
             FakePilot("Ghost-1", "RECOVERED"),
             FakePilot("Iceman-1", "RECOVERED"),
             FakePilot("Phoenix-1", "RECOVERED"),
             FakePilot("Reaper-1", "RECOVERED"),
-            FakePilot("Viper-1", "IDLE"),
+            FakePilot("Viper-1", "ON_DECK"),
         ]
         strip.update_pilots(pilots)
         settle(strip)
@@ -89,24 +89,24 @@ class TestIdlePositioning(unittest.TestCase):
             if sprite.phase == "DECK_PARK":
                 self.assertGreater(
                     idle.col, sprite.col + 4,
-                    f"IDLE overlaps PARK sprite {pid} (idle={idle.col}, park={sprite.col})"
+                    f"ON_DECK overlaps PARK sprite {pid} (idle={idle.col}, park={sprite.col})"
                 )
 
-    def test_multiple_idle_stagger(self):
+    def test_multiple_on_deck_stagger(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot(f"I-{i}", "IDLE") for i in range(3)])
+        strip.update_pilots([FakePilot(f"I-{i}", "ON_DECK") for i in range(3)])
         settle(strip)
         cols = sorted(s.col for s in strip._sprites.values() if s.phase == "DECK_IDLE")
         self.assertEqual(len(cols), 3)
         for i in range(len(cols) - 1):
             self.assertGreaterEqual(cols[i + 1] - cols[i], 5, f"Too close: {cols}")
 
-    def test_idle_past_park_at_all_widths(self):
+    def test_on_deck_past_park_at_all_widths(self):
         for w in [40, 60, 80, 100, 120, 160, 200]:
             with self.subTest(width=w):
                 strip = make_strip(w)
                 pilots = [FakePilot(f"P-{i}", "RECOVERED") for i in range(5)]
-                pilots.append(FakePilot("I-1", "IDLE"))
+                pilots.append(FakePilot("I-1", "ON_DECK"))
                 strip.update_pilots(pilots)
                 settle(strip)
                 idle = strip._sprites["I-1"]
@@ -114,12 +114,12 @@ class TestIdlePositioning(unittest.TestCase):
                 if parked:
                     max_park = max(s.col for s in parked)
                     self.assertGreater(idle.col, max_park,
-                                       f"Width {w}: IDLE at {idle.col} not past PARK at {max_park}")
+                                       f"Width {w}: ON_DECK at {idle.col} not past PARK at {max_park}")
 
-    def test_single_idle_no_recovered(self):
-        """IDLE alone (no parked sprites to dodge) still goes to CAT area."""
+    def test_single_on_deck_no_recovered(self):
+        """ON_DECK alone (no parked sprites to dodge) still goes to CAT area."""
         strip = make_strip()
-        strip.update_pilots([FakePilot("Solo-1", "IDLE")])
+        strip.update_pilots([FakePilot("Solo-1", "ON_DECK")])
         settle(strip)
         cat_start = strip._zone_col("CAT", 0.0)
         self.assertGreaterEqual(strip._sprites["Solo-1"].col, cat_start)
@@ -134,38 +134,38 @@ class TestPhaseTransitions(unittest.TestCase):
         strip.update_pilots([FakePilot("R-1", "RECOVERED")])
         self.assertEqual(strip._sprites["R-1"].phase, "DECK_PARK")
 
-    def test_airborne_starts_elevator(self):
+    def test_in_flight_starts_elevator(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("A-1", "IN_FLIGHT")])
         self.assertEqual(strip._sprites["A-1"].phase, "ELEVATOR")
 
-    def test_idle_to_airborne_triggers_taxi(self):
+    def test_on_deck_to_in_flight_triggers_taxi(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("V-1", "IDLE")])
+        strip.update_pilots([FakePilot("V-1", "ON_DECK")])
         settle(strip)
         self.assertEqual(strip._sprites["V-1"].phase, "DECK_IDLE")
 
-        strip.update_pilots([FakePilot("V-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("V-1", "IN_FLIGHT")])
         self.assertEqual(strip._sprites["V-1"].phase, "TAXI_TO_CAT")
 
-    def test_recovered_to_idle_goes_deck_idle(self):
+    def test_recovered_to_on_deck_goes_deck_idle(self):
         strip = make_strip()
         strip.update_pilots([FakePilot("P-1", "RECOVERED")])
         advance(strip, 2)
         self.assertEqual(strip._sprites["P-1"].phase, "DECK_PARK")
 
-        strip.update_pilots([FakePilot("P-1", "IDLE")])
+        strip.update_pilots([FakePilot("P-1", "ON_DECK")])
         settle(strip)
         self.assertEqual(strip._sprites["P-1"].phase, "DECK_IDLE")
 
-    def test_airborne_full_launch_sequence(self):
-        """AIRBORNE: ELEVATOR → TAXI_TO_CAT → CAT → LAUNCH → CRUISE.
+    def test_in_flight_full_launch_sequence(self):
+        """IN_FLIGHT: ELEVATOR → TAXI_TO_CAT → CAT → LAUNCH → CRUISE.
 
         Phases advance on tick boundaries, so we check the phase
         transitions in order without asserting exact tick counts.
         """
         strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("A-1", "IN_FLIGHT")])
         sprite = strip._sprites["A-1"]
 
         # Track phase sequence
@@ -183,43 +183,19 @@ class TestPhaseTransitions(unittest.TestCase):
 
     def test_on_approach_goes_to_return(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("A-1", "IN_FLIGHT")])
         advance(strip, 50)  # get airborne
 
         strip.update_pilots([FakePilot("A-1", "ON_APPROACH")])
         self.assertEqual(strip._sprites["A-1"].phase, "RETURN")
 
-    def test_recovered_from_airborne_goes_return(self):
+    def test_recovered_from_in_flight_goes_return(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("A-1", "IN_FLIGHT")])
         advance(strip, 50)  # cruise
 
         strip.update_pilots([FakePilot("A-1", "RECOVERED")])
         self.assertEqual(strip._sprites["A-1"].phase, "RETURN")
-
-    def test_mayday_phase(self):
-        strip = make_strip()
-        strip.update_pilots([FakePilot("M-1", "AIRBORNE")])
-        advance(strip, 50)
-
-        strip.update_pilots([FakePilot("M-1", "MAYDAY")])
-        self.assertEqual(strip._sprites["M-1"].phase, "MAYDAY")
-
-    def test_aar_starts_reverse(self):
-        strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
-        advance(strip, 50)
-
-        strip.update_pilots([FakePilot("A-1", "AAR")])
-        self.assertEqual(strip._sprites["A-1"].phase, "AAR_REVERSE")
-
-    def test_sar_starts_flameout(self):
-        strip = make_strip()
-        strip.update_pilots([FakePilot("A-1", "AIRBORNE")])
-        advance(strip, 50)
-
-        strip.update_pilots([FakePilot("A-1", "SAR")])
-        self.assertEqual(strip._sprites["A-1"].phase, "SAR_FLAMEOUT")
 
 
 # ── Sprite lifecycle ─────────────────────────────────────────────────
@@ -228,23 +204,23 @@ class TestSpriteLifecycle(unittest.TestCase):
 
     def test_sprite_created_on_first_update(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("X-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("X-1", "IN_FLIGHT")])
         self.assertIn("X-1", strip._sprites)
 
     def test_sprite_pruned_when_removed(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("X-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("X-1", "IN_FLIGHT")])
         for _ in range(_TOMBSTONE_TTL):
             strip.update_pilots([])
         self.assertNotIn("X-1", strip._sprites)
 
     def test_sprite_survives_same_status_update(self):
         strip = make_strip()
-        strip.update_pilots([FakePilot("X-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("X-1", "IN_FLIGHT")])
         advance(strip, 20)
         old_phase = strip._sprites["X-1"].phase
 
-        strip.update_pilots([FakePilot("X-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("X-1", "IN_FLIGHT")])
         self.assertEqual(strip._sprites["X-1"].phase, old_phase)
 
     def test_many_pilots_all_get_sprites(self):
@@ -256,7 +232,7 @@ class TestSpriteLifecycle(unittest.TestCase):
     def test_rapid_status_changes(self):
         """Rapidly cycling statuses shouldn't crash."""
         strip = make_strip()
-        statuses = ["IDLE", "AIRBORNE", "ON_APPROACH", "RECOVERED", "IDLE", "AIRBORNE", "MAYDAY"]
+        statuses = ["ON_DECK", "IN_FLIGHT", "ON_APPROACH", "RECOVERED", "ON_DECK", "IN_FLIGHT"]
         for s in statuses:
             strip.update_pilots([FakePilot("V-1", s)])
             advance(strip, 3)
@@ -270,7 +246,7 @@ class TestColumnBounds(unittest.TestCase):
     def test_sprites_never_negative(self):
         strip = make_strip(60)
         pilots = [FakePilot(f"P-{i}", s) for i, s in
-                  enumerate(["AIRBORNE", "RECOVERED", "IDLE", "ON_APPROACH", "MAYDAY"])]
+                  enumerate(["IN_FLIGHT", "RECOVERED", "ON_DECK", "ON_APPROACH"])]
         strip.update_pilots(pilots)
         advance(strip, 100)
         for sprite in strip._sprites.values():
@@ -278,7 +254,7 @@ class TestColumnBounds(unittest.TestCase):
 
     def test_sprites_within_strip_width(self):
         strip = make_strip(80)
-        pilots = [FakePilot(f"P-{i}", "AIRBORNE") for i in range(5)]
+        pilots = [FakePilot(f"P-{i}", "IN_FLIGHT") for i in range(5)]
         strip.update_pilots(pilots)
         advance(strip, 200)  # Let them cruise far
         for sprite in strip._sprites.values():
@@ -348,33 +324,33 @@ class TestStress(unittest.TestCase):
     def test_single_pilot_all_phases(self):
         """Walk one pilot through every major status without crashing."""
         strip = make_strip()
-        for status in ["IDLE", "AIRBORNE", "AAR", "AIRBORNE", "ON_APPROACH",
-                        "RECOVERED", "IDLE", "AIRBORNE", "SAR", "MAYDAY"]:
+        for status in ["ON_DECK", "IN_FLIGHT", "ON_APPROACH",
+                        "RECOVERED", "ON_DECK", "IN_FLIGHT"]:
             strip.update_pilots([FakePilot("Solo-1", status)])
             advance(strip, 15)
         self.assertIn("Solo-1", strip._sprites)
 
-    def test_twenty_airborne_dont_crash(self):
-        """20 simultaneous AIRBORNE agents — stress test."""
+    def test_twenty_in_flight_dont_crash(self):
+        """20 simultaneous IN_FLIGHT agents — stress test."""
         strip = make_strip(200)
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(20)]
+        pilots = [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(20)]
         strip.update_pilots(pilots)
         advance(strip, 100)
         self.assertEqual(len(strip._sprites), 20)
         for s in strip._sprites.values():
             self.assertGreaterEqual(s.col, 0)
 
-    def test_mixed_statuses_no_overlap_idle_park(self):
-        """Mix of statuses — IDLE must always be past PARK."""
+    def test_mixed_statuses_no_overlap_on_deck_park(self):
+        """Mix of statuses — ON_DECK must always be past PARK."""
         strip = make_strip(120)
         pilots = [
             FakePilot("R-1", "RECOVERED"),
             FakePilot("R-2", "RECOVERED"),
             FakePilot("R-3", "RECOVERED"),
-            FakePilot("I-1", "IDLE"),
-            FakePilot("I-2", "IDLE"),
-            FakePilot("A-1", "AIRBORNE"),
-            FakePilot("A-2", "AIRBORNE"),
+            FakePilot("I-1", "ON_DECK"),
+            FakePilot("I-2", "ON_DECK"),
+            FakePilot("A-1", "IN_FLIGHT"),
+            FakePilot("A-2", "IN_FLIGHT"),
         ]
         strip.update_pilots(pilots)
         settle(strip)
@@ -386,15 +362,15 @@ class TestStress(unittest.TestCase):
             max_park = max(s.col for s in parked)
             min_idle = min(s.col for s in idle)
             self.assertGreater(min_idle, max_park,
-                               f"IDLE col {min_idle} not past PARK col {max_park}")
+                               f"ON_DECK col {min_idle} not past PARK col {max_park}")
 
     def test_narrow_strip_no_crash(self):
         """Minimum width strip shouldn't crash."""
         strip = make_strip(40)
         pilots = [
             FakePilot("R-1", "RECOVERED"),
-            FakePilot("I-1", "IDLE"),
-            FakePilot("A-1", "AIRBORNE"),
+            FakePilot("I-1", "ON_DECK"),
+            FakePilot("A-1", "IN_FLIGHT"),
         ]
         strip.update_pilots(pilots)
         advance(strip, 50)
@@ -430,26 +406,26 @@ class TestLaneDistribution(unittest.TestCase):
             self.assertEqual(s.lane, idx % 2,
                              f"Parked sprite {idx} at col {s.col} should be lane {idx % 2}, got {s.lane}")
 
-    def test_idle_uses_both_lanes(self):
-        """Multiple idle sprites should also distribute across lanes."""
+    def test_on_deck_uses_both_lanes(self):
+        """Multiple on_deck sprites should also distribute across lanes."""
         strip = make_strip(120)
         pilots = [
             FakePilot("R-1", "RECOVERED"),
-            FakePilot("I-1", "IDLE"),
-            FakePilot("I-2", "IDLE"),
-            FakePilot("I-3", "IDLE"),
+            FakePilot("I-1", "ON_DECK"),
+            FakePilot("I-2", "ON_DECK"),
+            FakePilot("I-3", "ON_DECK"),
         ]
         strip.update_pilots(pilots)
         settle(strip)
         idle = [s for s in strip._sprites.values() if s.phase == "DECK_IDLE"]
         if len(idle) >= 2:
             lanes = {s.lane for s in idle}
-            self.assertEqual(lanes, {0, 1}, "Idle sprites should use both lanes")
+            self.assertEqual(lanes, {0, 1}, "On-deck sprites should use both lanes")
 
     def test_active_sprites_deconflict_to_lane1(self):
-        """Two overlapping airborne sprites should use different lanes."""
+        """Two overlapping in-flight sprites should use different lanes."""
         strip = make_strip(120)
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(3)]
+        pilots = [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(3)]
         strip.update_pilots(pilots)
         # Advance past elevator into cruise
         advance(strip, PHASE_TICKS["ELEVATOR"] + PHASE_TICKS.get("TAXI_TO_CAT", 12) + PHASE_TICKS.get("CAT", 8) + 10)
@@ -476,13 +452,13 @@ class TestLaneDistribution(unittest.TestCase):
                         f"Same-lane sprites at col {parked[i].col} and {parked[j].col} overlap")
 
     def test_mixed_crowd_uses_both_lanes(self):
-        """Realistic scenario: 4 recovered + 2 idle + 2 airborne should spread."""
+        """Realistic scenario: 4 recovered + 2 on_deck + 2 in_flight should spread."""
         strip = make_strip(120)
         pilots = [
             FakePilot("R-1", "RECOVERED"), FakePilot("R-2", "RECOVERED"),
             FakePilot("R-3", "RECOVERED"), FakePilot("R-4", "RECOVERED"),
-            FakePilot("I-1", "IDLE"), FakePilot("I-2", "IDLE"),
-            FakePilot("A-1", "AIRBORNE"), FakePilot("A-2", "AIRBORNE"),
+            FakePilot("I-1", "ON_DECK"), FakePilot("I-2", "ON_DECK"),
+            FakePilot("A-1", "IN_FLIGHT"), FakePilot("A-2", "IN_FLIGHT"),
         ]
         strip.update_pilots(pilots)
         settle(strip)
@@ -493,7 +469,7 @@ class TestLaneDistribution(unittest.TestCase):
     def test_elevator_always_lane0(self):
         """Elevator phase sprites should always be lane 0."""
         strip = make_strip(100)
-        pilots = [FakePilot("A-1", "AIRBORNE")]
+        pilots = [FakePilot("A-1", "IN_FLIGHT")]
         strip.update_pilots(pilots)
         advance(strip, 1)  # Still in elevator
         elevator = [s for s in strip._sprites.values() if s.phase == "ELEVATOR"]
@@ -509,7 +485,7 @@ class TestTicketLabels(unittest.TestCase):
     def test_ticket_id_stored_on_sprite(self):
         """FlightSprite should store ticket_id from pilot."""
         strip = make_strip(100)
-        pilot = FakePilot("Phoenix-1", "AIRBORNE", ticket_id="ENG-175")
+        pilot = FakePilot("Phoenix-1", "IN_FLIGHT", ticket_id="ENG-175")
         strip.update_pilots([pilot])
         sprite = strip._sprites.get("Phoenix-1")
         self.assertIsNotNone(sprite)
@@ -585,43 +561,35 @@ class TestActionValidation(unittest.TestCase):
     These don't need the TUI — just verify the state logic.
     """
 
-    VALID_RESUME = {"RECOVERED", "MAYDAY", "IDLE"}
-    VALID_RECALL = {"AIRBORNE"}
-    VALID_COMPACT = {"AIRBORNE"}  # compact triggers AAR
+    VALID_RESUME = {"RECOVERED", "ON_DECK"}
+    VALID_RECALL = {"IN_FLIGHT"}
     INVALID_WAVEOFF = set()  # wave-off works on everything
 
     def test_resume_valid_statuses(self):
         for status in self.VALID_RESUME:
             self.assertIn(status, self.VALID_RESUME)
 
-    def test_resume_invalid_for_airborne(self):
-        self.assertNotIn("AIRBORNE", self.VALID_RESUME)
+    def test_resume_invalid_for_in_flight(self):
+        self.assertNotIn("IN_FLIGHT", self.VALID_RESUME)
 
-    def test_resume_invalid_for_aar(self):
-        self.assertNotIn("AAR", self.VALID_RESUME)
-
-    def test_recall_only_airborne(self):
-        self.assertEqual(self.VALID_RECALL, {"AIRBORNE"})
+    def test_recall_only_in_flight(self):
+        self.assertEqual(self.VALID_RECALL, {"IN_FLIGHT"})
 
     def test_waveoff_works_on_all(self):
         """Wave-off should work on any status."""
-        all_statuses = {"IDLE", "AIRBORNE", "ON_APPROACH", "RECOVERED", "MAYDAY", "AAR", "SAR"}
+        all_statuses = {"ON_DECK", "IN_FLIGHT", "ON_APPROACH", "RECOVERED"}
         for status in all_statuses:
             self.assertNotIn(status, self.INVALID_WAVEOFF)
 
     def test_context_hotkey_resume_shown(self):
-        """Resume key should be shown for RECOVERED/MAYDAY/IDLE."""
-        for status in ["RECOVERED", "MAYDAY", "IDLE"]:
+        """Resume key should be shown for RECOVERED/ON_DECK."""
+        for status in ["RECOVERED", "ON_DECK"]:
             self.assertIn(status, self.VALID_RESUME,
                           f"Resume should be available for {status}")
 
-    def test_context_hotkey_recall_hidden_for_idle(self):
-        """Recall should NOT be shown for IDLE pilots."""
-        self.assertNotIn("IDLE", self.VALID_RECALL)
-
-    def test_context_hotkey_compact_hidden_for_recovered(self):
-        """Compact should NOT be shown for RECOVERED pilots."""
-        self.assertNotIn("RECOVERED", self.VALID_COMPACT)
+    def test_context_hotkey_recall_hidden_for_on_deck(self):
+        """Recall should NOT be shown for ON_DECK pilots."""
+        self.assertNotIn("ON_DECK", self.VALID_RECALL)
 
 
 # ── Quote Escaping Tests ─────────────────────────────────────────────
@@ -694,20 +662,20 @@ class TestProcessGroup(unittest.TestCase):
 class TestRapidStatusFlapping(unittest.TestCase):
     """Test what happens when status changes rapidly (e.g. token delta jitter)."""
 
-    def test_airborne_idle_airborne_flap(self):
-        """Agent flaps AIRBORNE → IDLE → AIRBORNE within a few ticks.
+    def test_in_flight_on_deck_in_flight_flap(self):
+        """Agent flaps IN_FLIGHT → ON_DECK → IN_FLIGHT within a few ticks.
         This happens when token flow pauses briefly. Sprite shouldn't reset position."""
         strip = make_strip(120)
-        strip.update_pilots([FakePilot("F-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("F-1", "IN_FLIGHT")])
         settle(strip)
         # Get position after cruise
         advance(strip, 20)
         pos_before = strip._sprites["F-1"].col
 
-        # Flap to IDLE then back
-        strip.update_pilots([FakePilot("F-1", "IDLE")])
+        # Flap to ON_DECK then back
+        strip.update_pilots([FakePilot("F-1", "ON_DECK")])
         advance(strip, 2)
-        strip.update_pilots([FakePilot("F-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("F-1", "IN_FLIGHT")])
         advance(strip, 2)
         pos_after = strip._sprites["F-1"].col
 
@@ -715,49 +683,14 @@ class TestRapidStatusFlapping(unittest.TestCase):
         self.assertGreater(pos_after, pos_before - 20,
                            "Flapping status shouldn't teleport sprite back to deck")
 
-    def test_recovered_mayday_recovered_flap(self):
-        """RECOVERED → MAYDAY → RECOVERED shouldn't corrupt sprite phase."""
-        strip = make_strip(100)
-        strip.update_pilots([FakePilot("F-1", "RECOVERED")])
-        settle(strip)
-
-        strip.update_pilots([FakePilot("F-1", "MAYDAY")])
-        advance(strip, 3)
-        strip.update_pilots([FakePilot("F-1", "RECOVERED")])
-        advance(strip, 3)
-
-        sprite = strip._sprites.get("F-1")
-        self.assertIsNotNone(sprite)
-        # Should end up parked, not stuck in a MAYDAY phase
-        self.assertIn(sprite.phase, ("DECK_PARK", "TAXI_BACK", "RETURN", "DECEL", "TRAP"),
-                      f"After flap should be recovering, got {sprite.phase}")
-
-    def test_rapid_aar_cancel(self):
-        """Start AAR then immediately go back to AIRBORNE (cancel compaction)."""
-        strip = make_strip(120)
-        strip.update_pilots([FakePilot("F-1", "AIRBORNE")])
-        settle(strip)
-        advance(strip, 20)
-
-        strip.update_pilots([FakePilot("F-1", "AAR")])
-        advance(strip, 3)  # Just started reversing
-        strip.update_pilots([FakePilot("F-1", "AIRBORNE")])
-        advance(strip, 5)
-
-        sprite = strip._sprites.get("F-1")
-        self.assertIsNotNone(sprite)
-        # Should not be stuck in AAR phases
-        self.assertFalse(sprite.phase.startswith("AAR"),
-                         f"Cancelled AAR should not stay in {sprite.phase}")
-
 
 class TestSimultaneousStatusChanges(unittest.TestCase):
     """Multiple pilots changing status at once."""
 
     def test_all_recover_simultaneously(self):
-        """5 airborne agents all RECOVER at the same tick."""
+        """5 in-flight agents all RECOVER at the same tick."""
         strip = make_strip(150)
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(5)]
+        pilots = [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(5)]
         strip.update_pilots(pilots)
         settle(strip)
         advance(strip, 30)  # In cruise
@@ -778,38 +711,21 @@ class TestSimultaneousStatusChanges(unittest.TestCase):
                         abs(parked[i].col - parked[j].col), 4,
                         f"Same-lane park overlap at cols {parked[i].col} and {parked[j].col}")
 
-    def test_all_go_mayday_simultaneously(self):
-        """5 agents all crash at the same tick."""
-        strip = make_strip(150)
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(5)]
-        strip.update_pilots(pilots)
-        settle(strip)
-        advance(strip, 20)
-
-        pilots = [FakePilot(f"A-{i}", "MAYDAY") for i in range(5)]
-        strip.update_pilots(pilots)
-        advance(strip, 5)
-
-        # All should be in mayday-related phases, none should crash
-        for s in strip._sprites.values():
-            self.assertIsNotNone(s.phase, f"{s.pilot_id} has no phase")
-
-
 class TestPilotLifecycleFull(unittest.TestCase):
     """Walk a pilot through the complete lifecycle multiple times."""
 
     def test_full_lifecycle_twice(self):
-        """IDLE → AIRBORNE → RECOVERED → resume → AIRBORNE → RECOVERED.
+        """ON_DECK → IN_FLIGHT → RECOVERED → resume → IN_FLIGHT → RECOVERED.
         Simulates a pilot being deployed, completing, then redeployed."""
         strip = make_strip(120)
 
-        # Deploy as IDLE
-        strip.update_pilots([FakePilot("P-1", "IDLE")])
+        # Deploy as ON_DECK
+        strip.update_pilots([FakePilot("P-1", "ON_DECK")])
         settle(strip)
         self.assertIn(strip._sprites["P-1"].phase, ("DECK_IDLE", "ELEVATOR"))
 
-        # Go airborne
-        strip.update_pilots([FakePilot("P-1", "AIRBORNE")])
+        # Go in-flight
+        strip.update_pilots([FakePilot("P-1", "IN_FLIGHT")])
         advance(strip, 50)
         self.assertNotIn(strip._sprites["P-1"].phase, ("DECK_IDLE", "DECK_PARK"))
 
@@ -818,10 +734,10 @@ class TestPilotLifecycleFull(unittest.TestCase):
         advance(strip, 60)  # Land
         self.assertEqual(strip._sprites["P-1"].phase, "DECK_PARK")
 
-        # Resume — back to IDLE then AIRBORNE
-        strip.update_pilots([FakePilot("P-1", "IDLE")])
+        # Resume — back to ON_DECK then IN_FLIGHT
+        strip.update_pilots([FakePilot("P-1", "ON_DECK")])
         settle(strip)
-        strip.update_pilots([FakePilot("P-1", "AIRBORNE")])
+        strip.update_pilots([FakePilot("P-1", "IN_FLIGHT")])
         advance(strip, 50)
         self.assertNotIn(strip._sprites["P-1"].phase, ("DECK_IDLE", "DECK_PARK"))
 
@@ -829,41 +745,6 @@ class TestPilotLifecycleFull(unittest.TestCase):
         strip.update_pilots([FakePilot("P-1", "RECOVERED")])
         advance(strip, 60)
         self.assertEqual(strip._sprites["P-1"].phase, "DECK_PARK")
-
-    def test_aar_full_cycle(self):
-        """AIRBORNE → AAR → back to AIRBORNE after refuel."""
-        strip = make_strip(120)
-        strip.update_pilots([FakePilot("P-1", "AIRBORNE")])
-        settle(strip)
-        advance(strip, 30)
-
-        strip.update_pilots([FakePilot("P-1", "AAR")])
-        # Run through all AAR phases
-        total_aar_ticks = sum(PHASE_TICKS.get(p, 0)
-                              for p in ["AAR_REVERSE", "AAR_DOCK", "AAR_REFUEL", "AAR_DISCONNECT"])
-        advance(strip, total_aar_ticks + 10)
-
-        # After AAR completes, should be back in a cruise-like phase
-        sprite = strip._sprites["P-1"]
-        self.assertFalse(sprite.phase.startswith("AAR"),
-                         f"Should have exited AAR, stuck in {sprite.phase}")
-
-    def test_sar_full_cycle(self):
-        """AIRBORNE → SAR → replane → back to active."""
-        strip = make_strip(120)
-        strip.update_pilots([FakePilot("P-1", "AIRBORNE")])
-        settle(strip)
-        advance(strip, 20)
-
-        strip.update_pilots([FakePilot("P-1", "SAR")])
-        total_sar_ticks = sum(PHASE_TICKS.get(p, 0)
-                              for p in ["SAR_FLAMEOUT", "SAR_EJECT", "SAR_HELO_OUT",
-                                        "SAR_PICKUP", "SAR_HELO_RTB", "SAR_REPLANE"])
-        advance(strip, total_sar_ticks + 10)
-
-        sprite = strip._sprites["P-1"]
-        self.assertFalse(sprite.phase.startswith("SAR"),
-                         f"Should have exited SAR, stuck in {sprite.phase}")
 
 
 class TestExtremeDensity(unittest.TestCase):
@@ -885,9 +766,9 @@ class TestExtremeDensity(unittest.TestCase):
         strip = make_strip(80)
         pilots = (
             [FakePilot(f"R-{i}", "RECOVERED") for i in range(5)] +
-            [FakePilot(f"I-{i}", "IDLE") for i in range(3)] +
-            [FakePilot(f"A-{i}", "AIRBORNE") for i in range(5)] +
-            [FakePilot("M-1", "MAYDAY"), FakePilot("S-1", "SAR")]
+            [FakePilot(f"I-{i}", "ON_DECK") for i in range(3)] +
+            [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(5)] +
+            [FakePilot("OA-1", "ON_APPROACH"), FakePilot("OA-2", "ON_APPROACH")]
         )
         strip.update_pilots(pilots)
         settle(strip)
@@ -908,19 +789,19 @@ class TestExtremeDensity(unittest.TestCase):
     def test_pilot_added_then_removed(self):
         """Add 5 pilots, remove 2, add 3 more. Sprite dict should be clean."""
         strip = make_strip(100)
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(5)]
+        pilots = [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(5)]
         strip.update_pilots(pilots)
         settle(strip)
         self.assertEqual(len(strip._sprites), 5)
 
         # Remove 2 — drain tombstone TTL via repeated update_pilots calls
-        pilots = [FakePilot(f"A-{i}", "AIRBORNE") for i in range(3)]
+        pilots = [FakePilot(f"A-{i}", "IN_FLIGHT") for i in range(3)]
         for _ in range(_TOMBSTONE_TTL):
             strip.update_pilots(pilots)
         self.assertEqual(len(strip._sprites), 3, "Removed pilots should be pruned")
 
         # Add 3 new
-        pilots += [FakePilot(f"B-{i}", "AIRBORNE") for i in range(3)]
+        pilots += [FakePilot(f"B-{i}", "IN_FLIGHT") for i in range(3)]
         strip.update_pilots(pilots)
         advance(strip, 5)
         self.assertEqual(len(strip._sprites), 6, "New pilots should be added")
@@ -1081,65 +962,41 @@ class TestHUDBarGrouping(unittest.TestCase):
         for key in global_keys:
             self.assertIn(key, global_keys)
 
-    def test_pilot_context_keys_for_airborne(self):
-        """AIRBORNE pilot should get Recall and Compact, not Resume or Dismiss."""
-        status = "AIRBORNE"
+    def test_pilot_context_keys_for_in_flight(self):
+        """IN_FLIGHT pilot should get Recall and Wave-off, not Resume or Dismiss."""
+        status = "IN_FLIGHT"
         keys = []
-        if status in ("RECOVERED", "MAYDAY", "IDLE"):
+        if status in ("RECOVERED", "ON_DECK"):
             keys.append("R")
-        if status == "AIRBORNE":
+        if status == "IN_FLIGHT":
             keys.append("X")
-            keys.append("K")
         if status not in ("RECOVERED",):
             keys.append("W")
-        if status in ("RECOVERED", "MAYDAY"):
+        if status == "RECOVERED":
             keys.append("Z")
 
-        self.assertIn("X", keys, "AIRBORNE should have Recall")
-        self.assertIn("K", keys, "AIRBORNE should have Compact")
-        self.assertIn("W", keys, "AIRBORNE should have Wave-off")
-        self.assertNotIn("R", keys, "AIRBORNE should NOT have Resume")
-        self.assertNotIn("Z", keys, "AIRBORNE should NOT have Dismiss")
+        self.assertIn("X", keys, "IN_FLIGHT should have Recall")
+        self.assertIn("W", keys, "IN_FLIGHT should have Wave-off")
+        self.assertNotIn("R", keys, "IN_FLIGHT should NOT have Resume")
+        self.assertNotIn("Z", keys, "IN_FLIGHT should NOT have Dismiss")
 
     def test_pilot_context_keys_for_recovered(self):
-        """RECOVERED pilot should get Resume and Dismiss, not Recall/Compact/Wave-off."""
+        """RECOVERED pilot should get Resume and Dismiss, not Recall/Wave-off."""
         status = "RECOVERED"
         keys = []
-        if status in ("RECOVERED", "MAYDAY", "IDLE"):
+        if status in ("RECOVERED", "ON_DECK"):
             keys.append("R")
-        if status == "AIRBORNE":
+        if status == "IN_FLIGHT":
             keys.append("X")
-            keys.append("K")
         if status not in ("RECOVERED",):
             keys.append("W")
-        if status in ("RECOVERED", "MAYDAY"):
+        if status == "RECOVERED":
             keys.append("Z")
 
         self.assertIn("R", keys, "RECOVERED should have Resume")
         self.assertIn("Z", keys, "RECOVERED should have Dismiss")
         self.assertNotIn("X", keys, "RECOVERED should NOT have Recall")
-        self.assertNotIn("K", keys, "RECOVERED should NOT have Compact")
         self.assertNotIn("W", keys, "RECOVERED should NOT have Wave-off")
-
-    def test_pilot_context_keys_for_mayday(self):
-        """MAYDAY pilot should get Resume, Wave-off, and Dismiss."""
-        status = "MAYDAY"
-        keys = []
-        if status in ("RECOVERED", "MAYDAY", "IDLE"):
-            keys.append("R")
-        if status == "AIRBORNE":
-            keys.append("X")
-            keys.append("K")
-        if status not in ("RECOVERED",):
-            keys.append("W")
-        if status in ("RECOVERED", "MAYDAY"):
-            keys.append("Z")
-
-        self.assertIn("R", keys)
-        self.assertIn("W", keys)
-        self.assertIn("Z", keys)
-        self.assertNotIn("X", keys)
-        self.assertNotIn("K", keys)
 
     def test_t_label_changes_with_worktree(self):
         """T label should be 'Worktree' when pilot has worktree, 'Terminal' otherwise."""

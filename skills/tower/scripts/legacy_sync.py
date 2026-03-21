@@ -163,12 +163,12 @@ class LegacySync:
             cs = pilot.callsign
             delta_is_tracking = cs in ctx._reconciler.prev_tokens and ctx._reconciler.prev_tokens[cs] > 0
 
-            if pilot.status == "IDLE" and not has_tokens:
+            if pilot.status == "ON_DECK" and not has_tokens:
                 pass  # Stay on deck — no tokens yet
             elif pilot.status == "ON_APPROACH" and delta_is_tracking:
                 pass  # Delta tracker said fly home — don't override
-            elif cic_status == "AIRBORNE" and not has_tokens:
-                pilot.status = "IDLE"  # No evidence of work — keep grounded
+            elif cic_status == "IN_FLIGHT" and not has_tokens:
+                pilot.status = "ON_DECK"  # No evidence of work — keep grounded
             else:
                 pilot.status = cic_status
             ctx_remaining = agent.context or {}
@@ -190,7 +190,7 @@ class LegacySync:
                     ss = json.loads(ss_path.read_text(encoding="utf-8"))
                     ss_age = int(time_mod.time()) - ss.get("timestamp", 0)
                     ss_status = ss.get("status", "").upper()
-                    if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED", "PREFLIGHT"):
+                    if ss_age < 90 and ss_status in ("AIRBORNE", "HOLDING", "ON_APPROACH", "RECOVERED", "PREFLIGHT", "IN_FLIGHT", "ON_DECK"):
                         # Never let sentinel downgrade RECOVERED → something else
                         if pilot.status == "RECOVERED" and ss_status != "RECOVERED":
                             pass  # keep RECOVERED
@@ -215,7 +215,7 @@ class LegacySync:
                         cmd_data = json.loads(cmd_path.read_text(encoding="utf-8"))
                         cmd_path.unlink()  # consume — one-shot
                         new_status = cmd_data.get("set_status", "").upper()
-                        if new_status in ("AIRBORNE", "IDLE", "RECOVERED", "ON_APPROACH", "MAYDAY", "AAR", "SAR", "PREFLIGHT"):
+                        if new_status in ("IN_FLIGHT", "ON_DECK", "RECOVERED", "ON_APPROACH"):
                             pilot.status = new_status
                             ctx._reconciler.stale_frames.pop(pilot.callsign, None)
                             reason = cmd_data.get("reason", "command override")

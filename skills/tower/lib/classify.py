@@ -17,13 +17,12 @@ from typing import Optional
 
 # ── Status constants ──────────────────────────────────────────────────
 
-AIRBORNE    = "AIRBORNE"
+IN_FLIGHT   = "IN_FLIGHT"
 ON_APPROACH = "ON_APPROACH"
-HOLDING     = "HOLDING"
+ON_DECK     = "ON_DECK"
 RECOVERED   = "RECOVERED"
-PREFLIGHT   = "PREFLIGHT"
 
-_PRIORITY = {HOLDING: 0, ON_APPROACH: 1, AIRBORNE: 2}
+_PRIORITY = {ON_DECK: 0, ON_APPROACH: 1, IN_FLIGHT: 2}
 
 # ── Tool sets ─────────────────────────────────────────────────────────
 

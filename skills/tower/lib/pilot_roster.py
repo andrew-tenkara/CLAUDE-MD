@@ -108,7 +108,7 @@ class Pilot:
     fuel_pct: int = 100
     tokens_used: int = 0
     tool_calls: int = 0
-    status: str = "IDLE"
+    status: str = "ON_DECK"
     launched_at: float = 0.0
     last_tool_at: float = 0.0
     subagents: list = field(default_factory=list)
@@ -164,7 +164,7 @@ def derive_mood(pilot: Pilot) -> str:
     if pilot.fuel_pct < 30:
         return "strained"
     if (
-        pilot.status == "AIRBORNE"
+        pilot.status == "IN_FLIGHT"
         and pilot.last_tool_at > 0
         and (time.time() - pilot.last_tool_at) > 60
     ):

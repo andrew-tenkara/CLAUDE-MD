@@ -126,7 +126,7 @@ class CommandDispatcher:
             directive=directive,
         )
 
-        pilot.status = "IDLE"
+        pilot.status = "ON_DECK"
         pilot.launched_at = time_mod.time()
 
         self._launch_agent(pilot, directive)
@@ -265,7 +265,7 @@ class CommandDispatcher:
                     directive=directive,
                     personality_prompt=personality,
                 )
-                pilot.status = "IDLE"
+                pilot.status = "ON_DECK"
                 pilot.launched_at = time_mod.time()
                 ctx._add_radio("PRI-FLY", f"DECK IDLE — {pilot.callsign} standing by on {ticket.id}: {ticket.title[:40]}", "success")
                 _notify("USS TENKARA", f"{pilot.callsign} on deck for {ticket.id}")
@@ -279,7 +279,7 @@ class CommandDispatcher:
                     directives=[],
                     agent_count=0,
                     model=model,
-                    status="QUEUED",
+                    status="ON_DECK",
                     spec_content=ticket.description or ticket.title,
                     created_at=time_mod.time(),
                 )
@@ -382,7 +382,7 @@ class CommandDispatcher:
         if target == "idle":
             idle_pilots = [
                 p for p in ctx._roster.all_pilots()
-                if p.status == "AIRBORNE" and p.fuel_pct < ctx._auto_compact_threshold
+                if p.status == "IN_FLIGHT" and p.fuel_pct < ctx._auto_compact_threshold
                 and (time_mod.time() - p.last_tool_at) > ctx._auto_compact_idle
             ]
             for pilot in idle_pilots:
@@ -390,7 +390,7 @@ class CommandDispatcher:
             ctx._add_radio("PRI-FLY", f"Compacting {len(idle_pilots)} idle agents", "system")
         elif target == "all":
             for pilot in ctx._roster.all_pilots():
-                if pilot.status == "AIRBORNE":
+                if pilot.status == "IN_FLIGHT":
                     self.trigger_compact(pilot.callsign)
         else:
             self.trigger_compact(target)
@@ -422,12 +422,10 @@ class CommandDispatcher:
     def trigger_compact(self, callsign: str) -> None:
         ctx = self.ctx
         pilot = ctx._roster.get_by_callsign(callsign)
-        if pilot and pilot.status == "AIRBORNE":
-            pilot.status = "AAR"
+        if pilot and pilot.status == "IN_FLIGHT":
             # SDK agents don't support mid-stream injection yet
-            # TODO: implement via SDK continue_conversation or prompt streaming
             if ctx._is_sdk_agent(callsign):
-                ctx._add_radio("PRI-FLY", f"AAR — {callsign} (SDK compact not yet supported, agent continues)", "system")
+                ctx._add_radio("PRI-FLY", f"COMPACT — {callsign} (SDK compact not yet supported, agent continues)", "system")
                 return
             ctx._agent_mgr.inject_message(
                 callsign,
@@ -459,12 +457,12 @@ class CommandDispatcher:
     def cmd_sitrep(self) -> None:
         ctx = self.ctx
         for pilot in ctx._roster.all_pilots():
-            if pilot.status == "AIRBORNE":
+            if pilot.status == "IN_FLIGHT":
                 ctx._agent_mgr.inject_message(
                     pilot.callsign,
                     "CIC: SITREP — report current status, progress, and any blockers."
                 )
-        ctx._add_radio("PRI-FLY", "SITREP requested from all AIRBORNE", "system")
+        ctx._add_radio("PRI-FLY", "SITREP requested from all IN FLIGHT", "system")
 
     def cmd_briefing(self, args: list[str]) -> None:
         ctx = self.ctx
@@ -594,7 +592,7 @@ class CommandDispatcher:
         )
         pilot.directive = directive
         pilot.model = model
-        pilot.status = "IDLE"
+        pilot.status = "ON_DECK"
         pilot.launched_at = time_mod.time()
 
         self._launch_agent(pilot, directive)
@@ -651,7 +649,7 @@ class CommandDispatcher:
                     directive=directive,
                     personality_prompt=personality,
                 )
-                pilot.status = "IDLE"
+                pilot.status = "ON_DECK"
                 pilot.launched_at = time_mod.time()
                 ctx._add_radio("PRI-FLY", f"DECK IDLE — {pilot.callsign} standing by on {ticket.id}: {ticket.title[:40]}", "success")
                 _notify("USS TENKARA", f"{pilot.callsign} on deck for {ticket.id}")
@@ -665,7 +663,7 @@ class CommandDispatcher:
                     directives=[],
                     agent_count=0,
                     model="sonnet",
-                    status="QUEUED",
+                    status="ON_DECK",
                     spec_content=ticket.description or ticket.title,
                     created_at=time_mod.time(),
                 )

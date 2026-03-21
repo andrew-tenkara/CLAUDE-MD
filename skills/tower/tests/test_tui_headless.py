@@ -171,7 +171,7 @@ async def test_add_pilot_appears_on_board(mock_externals):
             mission_title="Test ticket",
             directive="Do the thing",
         )
-        p.status = "IDLE"
+        p.status = "ON_DECK"
         p.launched_at = time.time()
 
         # Force UI refresh
@@ -195,7 +195,7 @@ async def test_multiple_pilots_on_board(mock_externals):
                 mission_title=f"Task {i}",
                 directive="work",
             )
-            p.status = "AIRBORNE"
+            p.status = "IN_FLIGHT"
             p.launched_at = time.time()
 
         app._board_state_sig = ""
@@ -249,7 +249,7 @@ async def test_dismiss_last_pilot_clears_board(mock_externals):
             mission_title="Last pilot",
             directive="work",
         )
-        p.status = "IDLE"
+        p.status = "ON_DECK"
         p.launched_at = time.time()
 
         app._board_state_sig = ""
@@ -279,7 +279,7 @@ async def test_dismiss_airborne_pilot(mock_externals):
             mission_title="Active task",
             directive="work",
         )
-        p.status = "AIRBORNE"
+        p.status = "IN_FLIGHT"
         p.launched_at = time.time()
 
         app._board_state_sig = ""
@@ -340,7 +340,7 @@ async def test_flight_strip_sprites_created(mock_externals):
             mission_title="Sprite test",
             directive="work",
         )
-        p.status = "AIRBORNE"
+        p.status = "IN_FLIGHT"
         p.launched_at = time.time()
 
         strip = app.query_one("#flight-strip", FlightOpsStrip)
@@ -473,7 +473,7 @@ async def test_pilot_lifecycle_idle_to_recovered(mock_externals):
             ticket_id="ENG-LC1", model="sonnet",
             mission_title="Lifecycle test", directive="work",
         )
-        p.status = "IDLE"
+        p.status = "ON_DECK"
         p.launched_at = time.time()
         app._board_state_sig = "__force_rebuild__"
         app._refresh_table()
@@ -482,7 +482,7 @@ async def test_pilot_lifecycle_idle_to_recovered(mock_externals):
         p.tokens_used = 500
         app._reconciler.prev_tokens["__never_match__"] = 0  # ensure no stale data
         # Manually trigger the status change (normally done by _check_token_deltas)
-        p.status = "AIRBORNE"
+        p.status = "IN_FLIGHT"
         app._board_state_sig = "__force_rebuild__"
         app._refresh_table()
 
@@ -513,7 +513,7 @@ async def test_mixed_statuses_on_board(mock_externals):
     """Board shows pilots in different statuses simultaneously."""
     app = _make_app(mock_externals)
     async with app.run_test(size=(120, 40)) as pilot_driver:
-        statuses = ["IDLE", "AIRBORNE", "ON_APPROACH", "RECOVERED", "MAYDAY", "AAR"]
+        statuses = ["ON_DECK", "IN_FLIGHT", "ON_APPROACH", "RECOVERED"]
         for i, status in enumerate(statuses):
             p = app._roster.assign(
                 ticket_id=f"ENG-MIX{i}", model="sonnet",
@@ -527,7 +527,7 @@ async def test_mixed_statuses_on_board(mock_externals):
 
         from textual.widgets import DataTable
         table = app.query_one("#agent-table", DataTable)
-        assert table.row_count == 6
+        assert table.row_count == 4
 
 
 @pytest.mark.asyncio
@@ -537,7 +537,7 @@ async def test_dismiss_does_not_affect_other_pilots(mock_externals):
     async with app.run_test(size=(120, 40)) as pilot_driver:
         p1 = app._roster.assign(ticket_id="ENG-A", model="sonnet",
                                  mission_title="Keep", directive="work")
-        p1.status = "AIRBORNE"
+        p1.status = "IN_FLIGHT"
         p1.launched_at = time.time()
 
         p2 = app._roster.assign(ticket_id="ENG-B", model="sonnet",
@@ -599,7 +599,7 @@ async def test_fuel_gauge_in_table(mock_externals):
     async with app.run_test(size=(120, 40)) as pilot_driver:
         p = app._roster.assign(ticket_id="ENG-FUEL", model="sonnet",
                                 mission_title="Fuel test", directive="work")
-        p.status = "AIRBORNE"
+        p.status = "IN_FLIGHT"
         p.fuel_pct = 25  # Low fuel
         p.launched_at = time.time()
         app._board_state_sig = "__force_rebuild__"
@@ -620,10 +620,8 @@ async def test_sprite_phases_for_different_statuses(mock_externals):
 
         test_cases = [
             ("RECOVERED", "DECK_PARK"),
-            ("AIRBORNE", "ELEVATOR"),
+            ("IN_FLIGHT", "ELEVATOR"),
             ("ON_APPROACH", "RETURN"),
-            ("SAR", "SAR_FLAMEOUT"),
-            ("AAR", "AAR_REVERSE"),
         ]
 
         for status, expected_phase in test_cases:
@@ -657,7 +655,7 @@ async def test_pilot_status_reflected_in_table(mock_externals):
             mission_title="Status test",
             directive="work",
         )
-        p.status = "AIRBORNE"
+        p.status = "IN_FLIGHT"
         p.fuel_pct = 75
         p.tokens_used = 5000
         p.launched_at = time.time()

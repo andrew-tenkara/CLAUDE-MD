@@ -40,10 +40,9 @@ class PriFlyHeader(Static):
         app = self.app
         roster = app._roster
 
-        airborne = sum(1 for p in roster.all_pilots() if p.status == "AIRBORNE")
-        idle = sum(1 for p in roster.all_pilots() if p.status == "IDLE")
+        airborne = sum(1 for p in roster.all_pilots() if p.status == "IN_FLIGHT")
+        on_deck = sum(1 for p in roster.all_pilots() if p.status == "ON_DECK")
         recovered = sum(1 for p in roster.all_pilots() if p.status == "RECOVERED")
-        mayday = sum(1 for p in roster.all_pilots() if p.status == "MAYDAY")
 
         header = Text()
         for line in CARRIER_ART.split("\n"):
@@ -51,10 +50,7 @@ class PriFlyHeader(Static):
             header.append("\n")
 
         header.append("CONDITION: ", style="bold white")
-        if mayday > 0:
-            pulse = app._condition_pulse
-            header.append("RED", style="bold red" if pulse else "bold dark_red")
-        elif airborne > 0:
+        if airborne > 0:
             header.append("GREEN", style="bold green")
         else:
             header.append("STANDBY", style="dim yellow")
@@ -598,7 +594,7 @@ class DeckStatus(Static):
         pilots = roster.all_pilots()
         agent_mgr = app._agent_mgr
 
-        fuel_pcts = [p.fuel_pct for p in pilots if p.status in ("AIRBORNE", "IDLE")]
+        fuel_pcts = [p.fuel_pct for p in pilots if p.status in ("IN_FLIGHT", "ON_DECK")]
         avg_fuel = round(sum(fuel_pcts) / len(fuel_pcts)) if fuel_pcts else 0
         total_tools = sum(p.tool_calls for p in pilots)
         active_count = len(agent_mgr.active_agents())

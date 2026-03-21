@@ -64,7 +64,7 @@ class Actions:
             return
 
         # Kill active agent if still running
-        if pilot.status in ("AIRBORNE", "AAR", "SAR", "ON_APPROACH"):
+        if pilot.status in ("IN_FLIGHT", "ON_APPROACH"):
             try:
                 ctx._agent_mgr.wave_off(pilot.callsign)
             except Exception:

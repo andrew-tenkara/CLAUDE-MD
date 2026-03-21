@@ -308,7 +308,7 @@ class Monitoring:
         now = time_mod.time()
         for pilot in ctx._roster.all_pilots():
             if (
-                pilot.status == "AIRBORNE"
+                pilot.status == "IN_FLIGHT"
                 and pilot.fuel_pct < ctx._auto_compact_threshold
                 and pilot.last_tool_at > 0
                 and (now - pilot.last_tool_at) > ctx._auto_compact_idle

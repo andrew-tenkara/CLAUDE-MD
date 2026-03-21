@@ -25,7 +25,7 @@ from agent_manager import AgentManager, AgentProcess, StreamEvent
 from sdk_bridge import SdkAgentManager, SdkAgent, AgentEvent, sdk_available
 from inline_sentinel import InlineSentinel
 from squadron_analyst import SquadronAnalyst
-from status_observer import derive_status, narrate_transition
+from status_observer import derive_status
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
 from mission_queue import Mission, MissionQueue
 from linear_bridge import (
@@ -61,7 +61,7 @@ log = logging.getLogger(__name__)
 from constants import (
     STATUS_ICONS, STATUS_COLORS, STATUS_SORT_ORDER, SOUNDS,
     _LEGACY_STATUS_MAP, _FLIGHT_STATUS_MAP,
-    _FLIGHT_STATUS_MAX_AGE, _FUEL_JUMP_THRESHOLD, _SAR_RECOVERY_DELAY, _AAR_RECOVERY_DELAY,
+    _FLIGHT_STATUS_MAX_AGE,
 )
 
 
@@ -917,8 +917,8 @@ class PriFlyCommander(App):
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
-        if pilot.status != "AIRBORNE":
-            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — not airborne", "error")
+        if pilot.status != "IN_FLIGHT":
+            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — not in flight", "error")
             return
         self._dispatcher.cmd_recall([pilot.callsign])
 
@@ -999,13 +999,11 @@ class PriFlyCommander(App):
     def _check_fuel_alerts(self) -> None:
         """Check fuel levels and emit bingo warnings. Does NOT set status."""
         for pilot in self._roster.all_pilots():
-            if pilot.status == "AIRBORNE" and pilot.fuel_pct <= 30:
+            if pilot.status == "IN_FLIGHT" and pilot.fuel_pct <= 30:
                 cs = pilot.callsign
                 if cs not in self._reconciler.bingo_notified:
                     self._reconciler.bingo_notified.add(cs)
-                    _play_sound("bingo")
                     self._add_radio(cs, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
-                    _notify("USS TENKARA — BINGO", f"{cs} at {pilot.fuel_pct}%")
 
     # ── Pipeline handoff ──────────────────────────────────────────
 
@@ -1061,7 +1059,6 @@ class PriFlyCommander(App):
                     f"PIPELINE ABORT — {failed_names} failed at seq {mission.pipeline_seq}",
                     "error",
                 )
-                _play_sound("mayday")
                 # Compensating transaction: revert merge commits from this seq
                 self._compensate_failed_seq(mission.pipeline_id, mission.pipeline_seq)
                 self._save_pipeline_state(mission.pipeline_id)
@@ -1070,7 +1067,7 @@ class PriFlyCommander(App):
             elif policy == "retry":
                 # Re-queue the failed missions for another attempt
                 for f in failures:
-                    f.status = "QUEUED"
+                    f.status = "ON_DECK"
                     self._add_radio("PRI-FLY", f"RETRY — re-queuing {f.id}", "system")
                 self._save_pipeline_state(mission.pipeline_id)
                 return  # Will re-deploy on next check cycle
@@ -1228,7 +1225,7 @@ class PriFlyCommander(App):
         for sib_mission in active_sibs:
             sib_pilots = self._roster.get_by_ticket(sib_mission.id)
             for sib_pilot in sib_pilots:
-                if sib_pilot.worktree_path and sib_pilot.status == "AIRBORNE":
+                if sib_pilot.worktree_path and sib_pilot.status == "IN_FLIGHT":
                     self._write_pull_signal(sib_pilot, recovered_pilot, parent_branch)
 
     def _write_pull_signal(self, target_pilot, merged_pilot, parent_branch: str) -> None:
@@ -1411,7 +1408,7 @@ class PriFlyCommander(App):
         """Check if any pipeline sub-agents have gone silent.
 
         If a sub-agent's progress.md hasn't been updated in 10 minutes and
-        they're AIRBORNE, mark them MAYDAY so the fan-in gate doesn't wait forever.
+        they're IN_FLIGHT, mark them RECOVERED so the fan-in gate doesn't wait forever.
         Called from the idle check timer.
         """
         now = time_mod.time()
@@ -1420,7 +1417,7 @@ class PriFlyCommander(App):
                 continue
             pilots = self._roster.get_by_ticket(mission.id)
             for pilot in pilots:
-                if pilot.status != "AIRBORNE" or not pilot.worktree_path:
+                if pilot.status != "IN_FLIGHT" or not pilot.worktree_path:
                     continue
                 # Check progress.md mtime as heartbeat
                 progress_file = Path(pilot.worktree_path) / ".sortie" / "progress.md"
@@ -1428,14 +1425,12 @@ class PriFlyCommander(App):
                     if progress_file.exists():
                         age = now - progress_file.stat().st_mtime
                         if age > self._PIPELINE_HEARTBEAT_TIMEOUT:
-                            pilot.status = "MAYDAY"
+                            pilot.status = "RECOVERED"
                             self._add_radio(
                                 pilot.callsign,
                                 f"PIPELINE TIMEOUT — no progress update in {int(age)}s",
                                 "error",
                             )
-                            _play_sound("mayday")
-                            _notify("USS TENKARA — TIMEOUT", f"{pilot.callsign} stalled in pipeline")
                 except OSError:
                     pass
 
@@ -1503,24 +1498,11 @@ class PriFlyCommander(App):
                         self._check_pipeline_handoff(pilot)
 
                     # Pipeline failure — mark mission FAILED, trigger on_failure policy
-                    if new_status == "MAYDAY" and pilot.ticket_id:
+                    if new_status == "RECOVERED" and pilot.ticket_id:
                         pipeline_mission = self._mission_queue.get(pilot.ticket_id)
                         if pipeline_mission and pipeline_mission.pipeline_id:
-                            self._mission_queue.fail_mission(pilot.ticket_id)
-                            self._check_pipeline_handoff(pilot)
-
-                    # Haiku narrator — explain the transition (async, non-blocking)
-                    import threading
-                    def _narrate(cs=pilot.callsign, old=old_status, new=new_status, w=wt):
-                        narrative = narrate_transition(cs, old, new, w)
-                        if narrative:
-                            try:
-                                self.call_from_thread(
-                                    self._add_radio, "ANALYST", f"{cs}: {narrative}", "system",
-                                )
-                            except Exception:
-                                pass
-                    threading.Thread(target=_narrate, daemon=True).start()
+                            # Check if this was an abnormal recovery (no session-ended)
+                            pass
         except Exception as e:
             log.warning("Status observation error: %s", e)
 
@@ -1537,7 +1519,7 @@ class PriFlyCommander(App):
 
             # Update sortie list header with count
             pilots = self._roster.all_pilots()
-            airborne = sum(1 for p in pilots if p.status == "AIRBORNE")
+            airborne = sum(1 for p in pilots if p.status == "IN_FLIGHT")
             total = len(pilots)
             sortie_hdr = self.query_one("#sortie-header", Static)
             t = Text()
@@ -1554,9 +1536,9 @@ class PriFlyCommander(App):
             pass  # Don't crash on periodic refresh
 
         # Update terminal title
-        airborne = sum(1 for p in self._roster.all_pilots() if p.status == "AIRBORNE")
+        airborne = sum(1 for p in self._roster.all_pilots() if p.status == "IN_FLIGHT")
         recovered = sum(1 for p in self._roster.all_pilots() if p.status == "RECOVERED")
-        self.title = f"USS TENKARA PRI-FLY — {airborne} AIRBORNE | {recovered} RECOVERED"
+        self.title = f"USS TENKARA PRI-FLY — {airborne} IN FLIGHT | {recovered} RECOVERED"
 
         # Update flight strip
         try:
@@ -1669,11 +1651,10 @@ class PriFlyCommander(App):
                     _key("P", "PR")
                 _sep()
                 # Flight ops group
-                if status in ("RECOVERED", "MAYDAY", "IDLE"):
+                if status in ("RECOVERED", "ON_DECK"):
                     _key("R", "Resume", "bold green")
-                if status == "AIRBORNE":
+                if status == "IN_FLIGHT":
                     _key("X", "Recall", "bold yellow")
-                    _key("K", "Compact", "bold cyan")
                 if status not in ("RECOVERED",):
                     _key("W", "Wave-off", "bold red")
                 _key("Z", "Dismiss")

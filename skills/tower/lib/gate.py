@@ -40,7 +40,7 @@ _GATE_TOOL = {
             "approved": {"type": "boolean"},
             "final_status": {
                 "type": "string",
-                "enum": ["IDLE", "PREFLIGHT", "AIRBORNE", "ON_APPROACH", "RECOVERED"],
+                "enum": ["ON_DECK", "IN_FLIGHT", "ON_APPROACH", "RECOVERED"],
             },
             "phase": {"type": "string"},
             "confidence": {"type": "number"},

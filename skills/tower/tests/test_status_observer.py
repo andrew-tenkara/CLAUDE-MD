@@ -34,50 +34,73 @@ class TestDeriveStatus(unittest.TestCase):
         self.sortie = Path(self.tmpdir) / ".sortie"
         self.sortie.mkdir()
 
-    # ── Priority 1: command override ──────────────────────────────────
-
-    def test_command_override_consumed(self):
-        cmd = {"set_status": "MAYDAY", "reason": "test", "source": "test"}
-        (self.sortie / "command.json").write_text(json.dumps(cmd))
-        assert derive_status(self.tmpdir) == "MAYDAY"
-        assert not (self.sortie / "command.json").exists()
-
-    def test_command_override_beats_session_ended(self):
-        (self.sortie / "session-ended").touch()
-        cmd = {"set_status": "AIRBORNE", "reason": "forced", "source": "xo"}
-        (self.sortie / "command.json").write_text(json.dumps(cmd))
-        assert derive_status(self.tmpdir) == "AIRBORNE"
-
-    # ── Priority 2: session-ended ─────────────────────────────────────
+    def test_no_worktree_returns_on_deck(self):
+        assert derive_status("") == "ON_DECK"
 
     def test_session_ended_returns_recovered(self):
         (self.sortie / "session-ended").touch()
         assert derive_status(self.tmpdir) == "RECOVERED"
 
-    def test_session_ended_from_airborne(self):
+    def test_command_override_consumed(self):
+        cmd = {"set_status": "RECOVERED", "reason": "test", "source": "test"}
+        (self.sortie / "command.json").write_text(json.dumps(cmd))
+        assert derive_status(self.tmpdir) == "RECOVERED"
+        assert not (self.sortie / "command.json").exists()
+
+    def test_command_override_beats_session_ended(self):
         (self.sortie / "session-ended").touch()
-        assert derive_status(self.tmpdir, current_status="AIRBORNE") == "RECOVERED"
+        cmd = {"set_status": "IN_FLIGHT", "reason": "forced", "source": "xo"}
+        (self.sortie / "command.json").write_text(json.dumps(cmd))
+        assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
-    # ── Priority 3: fresh JSONL (< 30s) ──────────────────────────────
+    def test_no_jsonl_returns_on_deck(self):
+        p1, p2 = _patch_evidence(jsonl_age=None)
+        with p1, p2:
+            assert derive_status(self.tmpdir) == "ON_DECK"
 
-    def test_fresh_jsonl_with_write_tools_returns_airborne(self):
+    def test_fresh_jsonl_returns_in_flight(self):
         events = [{"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Edit", "input": {}}
         ]}}]
         p1, p2 = _patch_evidence(jsonl_age=5.0, events=events)
         with p1, p2:
-            assert derive_status(self.tmpdir) == "AIRBORNE"
+            assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
-    def test_fresh_jsonl_with_read_tools_returns_preflight(self):
+    def test_fresh_jsonl_with_read_tools_returns_in_flight(self):
         events = [{"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Read", "input": {}}
         ]}}]
         p1, p2 = _patch_evidence(jsonl_age=5.0, events=events)
         with p1, p2:
-            assert derive_status(self.tmpdir) == "PREFLIGHT"
+            assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
-    def test_fresh_jsonl_with_mixed_tools_returns_airborne(self):
-        """Write tool present among reads → AIRBORNE."""
+    def test_warm_jsonl_in_flight_goes_on_approach(self):
+        """JSONL 60s old, was IN_FLIGHT → ON_APPROACH."""
+        p1, p2 = _patch_evidence(jsonl_age=60.0)
+        with p1, p2:
+            assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "ON_APPROACH"
+
+    def test_stale_jsonl_on_deck_stays_on_deck(self):
+        """JSONL 300s old, was ON_DECK → stays ON_DECK."""
+        p1, p2 = _patch_evidence(jsonl_age=300.0)
+        with p1, p2:
+            assert derive_status(self.tmpdir, current_status="ON_DECK") == "ON_DECK"
+
+    def test_in_flight_stays_during_thinking(self):
+        """Agent IN_FLIGHT, JSONL fresh, last events are text only → stay IN_FLIGHT."""
+        events = [{"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Let me think about this..."}
+        ]}}]
+        p1, p2 = _patch_evidence(jsonl_age=3.0, events=events)
+        with p1, p2:
+            assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "IN_FLIGHT"
+
+    def test_session_ended_from_in_flight(self):
+        (self.sortie / "session-ended").touch()
+        assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "RECOVERED"
+
+    def test_fresh_jsonl_with_mixed_tools_returns_in_flight(self):
+        """Write tool present among reads → IN_FLIGHT."""
         events = [
             {"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "name": "Read", "input": {}}
@@ -88,89 +111,7 @@ class TestDeriveStatus(unittest.TestCase):
         ]
         p1, p2 = _patch_evidence(jsonl_age=2.0, events=events)
         with p1, p2:
-            assert derive_status(self.tmpdir) == "AIRBORNE"
-
-    def test_airborne_stays_during_thinking(self):
-        """Agent AIRBORNE, JSONL fresh, last events are text only → stay AIRBORNE."""
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "Let me think about this..."}
-        ]}}]
-        p1, p2 = _patch_evidence(jsonl_age=3.0, events=events)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="AIRBORNE") == "AIRBORNE"
-
-    def test_airborne_read_tools_stays_airborne(self):
-        """Agent AIRBORNE, JSONL fresh, only read tools → stay AIRBORNE (no flicker)."""
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {}}
-        ]}}]
-        p1, p2 = _patch_evidence(jsonl_age=5.0, events=events)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="AIRBORNE") == "AIRBORNE"
-
-    # ── Priority 4: not fresh — IDLE or wind-down ─────────────────────
-
-    def test_no_worktree_returns_idle(self):
-        assert derive_status("") == "IDLE"
-
-    def test_no_jsonl_returns_idle(self):
-        p1, p2 = _patch_evidence(jsonl_age=None)
-        with p1, p2:
-            assert derive_status(self.tmpdir) == "IDLE"
-
-    def test_no_jsonl_airborne_goes_mayday(self):
-        """Was AIRBORNE but JSONL vanished entirely → MAYDAY (crash)."""
-        p1, p2 = _patch_evidence(jsonl_age=None)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="AIRBORNE") == "MAYDAY"
-
-    def test_stale_jsonl_returns_idle(self):
-        """JSONL 300s old, no current status → IDLE."""
-        p1, p2 = _patch_evidence(jsonl_age=300.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir) == "IDLE"
-
-    def test_stale_jsonl_idle_stays_idle(self):
-        """JSONL 300s old, was IDLE → stays IDLE."""
-        p1, p2 = _patch_evidence(jsonl_age=300.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="IDLE") == "IDLE"
-
-    def test_warm_jsonl_airborne_goes_on_approach(self):
-        """JSONL 60s old, was AIRBORNE this session → ON_APPROACH (winding down)."""
-        p1, p2 = _patch_evidence(jsonl_age=60.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="AIRBORNE") == "ON_APPROACH"
-
-    def test_stale_jsonl_airborne_goes_on_approach(self):
-        """JSONL 300s old, was AIRBORNE this session → ON_APPROACH."""
-        p1, p2 = _patch_evidence(jsonl_age=300.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="AIRBORNE") == "ON_APPROACH"
-
-    def test_on_approach_stays_on_approach(self):
-        """Already ON_APPROACH, still no fresh evidence → stays ON_APPROACH."""
-        p1, p2 = _patch_evidence(jsonl_age=60.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="ON_APPROACH") == "ON_APPROACH"
-
-    def test_stale_jsonl_on_approach_stays(self):
-        """ON_APPROACH with very stale JSONL → stays ON_APPROACH (waiting for session-ended)."""
-        p1, p2 = _patch_evidence(jsonl_age=600.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="ON_APPROACH") == "ON_APPROACH"
-
-    def test_warm_jsonl_no_current_status_returns_idle(self):
-        """JSONL 60s old, no current status (fresh Tower start) → IDLE."""
-        p1, p2 = _patch_evidence(jsonl_age=60.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir) == "IDLE"
-
-    def test_stale_jsonl_recovered_stays_idle(self):
-        """JSONL stale, was RECOVERED → IDLE (not a live state)."""
-        p1, p2 = _patch_evidence(jsonl_age=300.0)
-        with p1, p2:
-            assert derive_status(self.tmpdir, current_status="RECOVERED") == "IDLE"
+            assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
 
 class TestEvidenceReaders(unittest.TestCase):
@@ -214,8 +155,8 @@ class TestEvidenceReaders(unittest.TestCase):
         d = tempfile.mkdtemp()
         s = Path(d, ".sortie")
         s.mkdir()
-        (s / "command.json").write_text(json.dumps({"set_status": "SAR"}))
-        assert _read_command_override(d) == "SAR"
+        (s / "command.json").write_text(json.dumps({"set_status": "ON_APPROACH"}))
+        assert _read_command_override(d) == "ON_APPROACH"
         assert not (s / "command.json").exists()
 
     def test_command_override_missing(self):

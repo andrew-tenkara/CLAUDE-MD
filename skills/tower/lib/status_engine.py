@@ -1,11 +1,13 @@
 """USS Tenkara PRI-FLY — Status reconciliation engine.
 
-Multi-source status priority engine: sentinel > command > session-ended >
-flight-status > heuristic. This module is the clean seam for Phase 2 (SDK migration).
+Simplified v2: four states only.
+  ON_DECK     — pane open, no tokens flowing
+  IN_FLIGHT   — pane open, tokens flowing
+  ON_APPROACH — tokens stopped, landing sequence
+  RECOVERED   — pane closed / session ended
 
-The reconciler currently reads sentinel-status.json from disk. After SDK
-migration, it'll receive events from the SDK stream instead — same interface,
-different input source.
+Token-delta tracking promotes ON_DECK → IN_FLIGHT when tokens start,
+and demotes IN_FLIGHT → ON_APPROACH → RECOVERED when they stop.
 """
 from __future__ import annotations
 
@@ -19,7 +21,6 @@ from typing import Optional
 
 from constants import (
     _LEGACY_STATUS_MAP, _FLIGHT_STATUS_MAP, _FLIGHT_STATUS_MAX_AGE,
-    _FUEL_JUMP_THRESHOLD, _SAR_RECOVERY_DELAY, _AAR_RECOVERY_DELAY,
     SOUNDS,
 )
 
@@ -28,7 +29,7 @@ log = logging.getLogger(__name__)
 
 # ── Notifications (disabled by default) ──────────────────────────────
 
-_NOTIFICATIONS_ENABLED = False  # Disabled — too spammy during active sessions
+_NOTIFICATIONS_ENABLED = False
 
 
 def _play_sound(sound_key: str) -> None:
@@ -105,7 +106,7 @@ def _derive_legacy_status(agent) -> str:
 
     # Fresh context means agent is actively running
     if internal in ("DONE", "PRE-REVIEW") and has_context and not stale:
-        return "AIRBORNE"
+        return "IN_FLIGHT"
 
     # Recent JSONL activity also means running
     if internal in ("DONE", "PRE-REVIEW") and agent.jsonl_metrics:
@@ -117,41 +118,24 @@ def _derive_legacy_status(agent) -> str:
                     last_activity.replace("Z", "+00:00")
                 ).timestamp()
                 if time_mod.time() - activity_ts < 90:
-                    return "AIRBORNE"
+                    return "IN_FLIGHT"
             except (ValueError, AttributeError):
                 pass
 
-    return _LEGACY_STATUS_MAP.get(internal, "MAYDAY")
+    return _LEGACY_STATUS_MAP.get(internal, "RECOVERED")
 
-
-# ── Status transition events ─────────────────────────────────────────
 
 # ── Valid status transitions ──────────────────────────────────────────
 
-# Maps each status to the set of statuses it can transition to.
-# Prevents illogical jumps (e.g., AIRBORNE → RECOVERED without ON_APPROACH).
 VALID_TRANSITIONS: dict[str, set[str]] = {
-    "IDLE":         {"PREFLIGHT", "AIRBORNE", "RECOVERED", "MAYDAY"},
-    "PREFLIGHT":    {"AIRBORNE", "IDLE", "MAYDAY"},
-    "AIRBORNE":     {"ON_APPROACH", "AAR", "SAR", "MAYDAY"},
-    "ON_APPROACH":  {"RECOVERED", "AIRBORNE", "MAYDAY"},  # AIRBORNE = wave off
-    "RECOVERED":    {"IDLE", "MAYDAY"},  # IDLE = rearm/resume
-    "MAYDAY":       {"RECOVERED", "IDLE", "SAR"},
-    "AAR":          {"AIRBORNE", "MAYDAY"},
-    "SAR":          {"AIRBORNE", "MAYDAY"},
+    "ON_DECK":      {"IN_FLIGHT", "RECOVERED"},
+    "IN_FLIGHT":    {"ON_APPROACH", "RECOVERED"},
+    "ON_APPROACH":  {"RECOVERED", "IN_FLIGHT"},  # IN_FLIGHT = wave off (tokens resume)
+    "RECOVERED":    {"ON_DECK"},
 }
 
-# When a transition is invalid, this maps to an intermediate status to pass through.
-# e.g., AIRBORNE → RECOVERED should go through ON_APPROACH first.
 TRANSITION_INTERMEDIATES: dict[tuple[str, str], str] = {
-    ("AIRBORNE", "RECOVERED"): "ON_APPROACH",
-    ("AAR", "RECOVERED"): "AIRBORNE",       # AAR → AIRBORNE → ON_APPROACH → RECOVERED
-    ("SAR", "RECOVERED"): "AIRBORNE",       # SAR → AIRBORNE → ON_APPROACH → RECOVERED
-    ("IDLE", "ON_APPROACH"): "AIRBORNE",
-    ("IDLE", "AAR"): "AIRBORNE",
-    ("IDLE", "SAR"): "AIRBORNE",
-    ("PREFLIGHT", "ON_APPROACH"): "AIRBORNE",
-    ("PREFLIGHT", "RECOVERED"): "AIRBORNE",
+    ("IN_FLIGHT", "RECOVERED"): "ON_APPROACH",
 }
 
 
@@ -172,12 +156,10 @@ def validate_transition(current: str, proposed: str) -> str:
     if proposed in valid:
         return proposed
 
-    # Check for intermediate
     intermediate = TRANSITION_INTERMEDIATES.get((current, proposed))
     if intermediate:
         return intermediate
 
-    # Permissive fallback — allow it but log
     log.debug("Unusual transition: %s → %s (no intermediate defined)", current, proposed)
     return proposed
 
@@ -198,33 +180,25 @@ class StatusTransition:
 # ── StatusReconciler ─────────────────────────────────────────────────
 
 class StatusReconciler:
-    """Multi-source status priority engine.
+    """Token-delta status engine.
 
-    Priority cascade: sentinel > command > session-ended > flight-status > heuristic
-
-    This class encapsulates the token-delta tracking, fuel-jump detection, and
-    multi-source status reconciliation that was previously spread across
-    _apply_legacy_state, _check_token_deltas, and _check_compaction_recovery.
+    Tracks token flow per pilot:
+      - Tokens start flowing → ON_DECK becomes IN_FLIGHT
+      - Tokens stop flowing → IN_FLIGHT becomes ON_APPROACH after stale_threshold frames
+      - Stale long enough → ON_APPROACH becomes RECOVERED
     """
 
     def __init__(self, stale_threshold: int = 4) -> None:
         self.stale_frames: dict[str, int] = {}      # callsign → consecutive zero-delta frames
         self.prev_tokens: dict[str, int] = {}        # callsign → last known token count
-        self.prev_fuel: dict[str, int] = {}          # callsign → last known fuel_pct
-        self.sar_started: dict[str, float] = {}      # callsign → timestamp when SAR began
-        self.bingo_notified: set[str] = set()
         self.stale_threshold = stale_threshold
 
     def check_token_deltas(self, pilots, add_radio, exclude_callsigns: set | None = None) -> list[StatusTransition]:
         """Compare each pilot's token count to the previous frame.
 
-        - delta > 0  → tokens flowing, ensure AIRBORNE
-        - delta == 0 → stale frame; after stale_threshold consecutive
-                        stale frames on an AIRBORNE pilot → ON_APPROACH
-        - Newly IDLE pilots with first token activity → promote to AIRBORNE
-
-        exclude_callsigns: SDK-managed agents — their event stream handles status.
-        Returns transition events. Caller applies sounds/notifications.
+        - delta > 0  → tokens flowing, ensure IN_FLIGHT
+        - delta == 0 → stale frame; after stale_threshold → ON_APPROACH
+        - Stale long enough on ON_APPROACH → RECOVERED
         """
         transitions = []
         _exclude = exclude_callsigns or set()
@@ -243,15 +217,15 @@ class StatusReconciler:
                 self.stale_frames.pop(cs, None)
                 continue
 
-            # Unknown agents (no real directive) — pin to RECOVERED, never promote
+            # Unknown agents — pin to RECOVERED
             if pilot.mission_title in ("Unknown", "unknown") and pilot.ticket_id in ("Unknown", "unknown"):
                 if pilot.status != "RECOVERED":
                     pilot.status = "RECOVERED"
                 self.stale_frames.pop(cs, None)
                 continue
 
-            # Skip terminal/special statuses — don't interfere with AAR/SAR/RECOVERED/MAYDAY
-            if pilot.status in ("AAR", "SAR", "RECOVERED", "MAYDAY"):
+            # Skip terminal status
+            if pilot.status == "RECOVERED":
                 self.stale_frames.pop(cs, None)
                 continue
 
@@ -259,31 +233,31 @@ class StatusReconciler:
                 # Tokens moving — reset stale counter
                 self.stale_frames[cs] = 0
 
-                if pilot.status == "IDLE":
+                if pilot.status == "ON_DECK":
                     old = pilot.status
-                    pilot.status = "AIRBORNE"
-                    add_radio(cs, "LAUNCH — tokens flowing, going AIRBORNE", "success")
+                    pilot.status = "IN_FLIGHT"
+                    add_radio(cs, "LAUNCH — tokens flowing", "success")
                     transitions.append(StatusTransition(
-                        callsign=cs, old_status=old, new_status="AIRBORNE",
+                        callsign=cs, old_status=old, new_status="IN_FLIGHT",
                         phase="launch", message="tokens flowing",
                         notify_title="USS TENKARA — LAUNCH",
-                        notify_message=f"{cs} AIRBORNE",
+                        notify_message=f"{cs} IN FLIGHT",
                     ))
                 elif pilot.status == "ON_APPROACH":
-                    pilot.status = "AIRBORNE"
-                    add_radio(cs, "WAVE OFF RTB — tokens resumed, back AIRBORNE", "success")
+                    pilot.status = "IN_FLIGHT"
+                    add_radio(cs, "WAVE OFF — tokens resumed, back IN FLIGHT", "success")
 
             elif curr > 0:
                 # Had tokens before, but no new ones this frame
                 stale = self.stale_frames.get(cs, 0) + 1
                 self.stale_frames[cs] = stale
 
-                if pilot.status == "AIRBORNE" and stale >= self.stale_threshold:
+                if pilot.status == "IN_FLIGHT" and stale >= self.stale_threshold:
                     pilot.status = "ON_APPROACH"
-                    add_radio(cs, "ON APPROACH — token flow stopped, RTB", "system")
+                    add_radio(cs, "ON APPROACH — token flow stopped", "system")
                 elif pilot.status == "ON_APPROACH" and stale >= self.stale_threshold + 6:
                     pilot.status = "RECOVERED"
-                    add_radio(cs, "RECOVERED — on deck, mission complete", "success")
+                    add_radio(cs, "RECOVERED — on deck", "success")
                     transitions.append(StatusTransition(
                         callsign=cs, old_status="ON_APPROACH", new_status="RECOVERED",
                         phase="recovered", message="on deck",
@@ -299,93 +273,6 @@ class StatusReconciler:
             if cs not in active_cs:
                 del self.prev_tokens[cs]
                 self.stale_frames.pop(cs, None)
-
-        return transitions
-
-    def check_compaction_recovery(self, pilots, add_radio, exclude_callsigns: set | None = None) -> list[StatusTransition]:
-        """Detect context compaction events via fuel jumps.
-
-        When Claude auto-compacts, fuel_pct jumps up (e.g. 5% → 60%).
-        This triggers the recovery flow:
-          - SAR (was 0% / crashed) → flameout → helo → replane → relaunch
-          - AAR (voluntary compact) → refuel → disconnect → resume AIRBORNE
-
-        exclude_callsigns: SDK-managed agents — their event stream handles status.
-        """
-        transitions = []
-        now = time_mod.time()
-
-        _exclude = exclude_callsigns or set()
-
-        for pilot in pilots:
-            cs = pilot.callsign
-            if cs in _exclude:
-                continue
-            curr_fuel = pilot.fuel_pct
-            prev_fuel = self.prev_fuel.get(cs, curr_fuel)
-            self.prev_fuel[cs] = curr_fuel
-            fuel_gain = curr_fuel - prev_fuel
-
-            # ── SAR recovery: was crashed, fuel came back ──
-            if pilot.status == "SAR":
-                if cs not in self.sar_started:
-                    self.sar_started[cs] = now
-                    add_radio(cs, "FLAMEOUT — ejecting! Pedro helo launching...", "error")
-                    continue
-
-                elapsed = now - self.sar_started[cs]
-
-                if fuel_gain >= _FUEL_JUMP_THRESHOLD and elapsed >= _SAR_RECOVERY_DELAY:
-                    del self.sar_started[cs]
-                    pilot.status = "AIRBORNE"
-                    self.bingo_notified.discard(cs)
-                    self.stale_frames.pop(cs, None)
-                    add_radio(cs, f"SAR COMPLETE — Pedro has the pilot. Replaned, back AIRBORNE at {curr_fuel}%", "success")
-                    transitions.append(StatusTransition(
-                        callsign=cs, old_status="SAR", new_status="AIRBORNE",
-                        phase="sar_complete", message=f"replaned at {curr_fuel}%",
-                        notify_title="USS TENKARA — SAR",
-                        notify_message=f"{cs} recovered, replaned, AIRBORNE",
-                    ))
-                elif fuel_gain >= _FUEL_JUMP_THRESHOLD:
-                    add_radio(cs, "Pedro on station — winching pilot aboard...", "system")
-                elif elapsed > _SAR_RECOVERY_DELAY and curr_fuel > 0:
-                    self.sar_started.pop(cs, None)
-                    pilot.status = "AIRBORNE"
-                    self.bingo_notified.discard(cs)
-                    self.stale_frames.pop(cs, None)
-                    add_radio(cs, f"SAR COMPLETE — replaned, back AIRBORNE at {curr_fuel}%", "success")
-                    transitions.append(StatusTransition(
-                        callsign=cs, old_status="SAR", new_status="AIRBORNE",
-                        phase="sar_complete", message=f"replaned at {curr_fuel}%",
-                        notify_title="USS TENKARA — SAR",
-                        notify_message=f"{cs} recovered, AIRBORNE",
-                    ))
-                continue
-
-            # ── AAR recovery: was refueling, fuel came back ──
-            if pilot.status == "AAR":
-                if fuel_gain >= _FUEL_JUMP_THRESHOLD:
-                    pilot.status = "AIRBORNE"
-                    self.bingo_notified.discard(cs)
-                    self.stale_frames.pop(cs, None)
-                    add_radio(cs, f"AAR COMPLETE — disconnect, back AIRBORNE at {curr_fuel}%", "success")
-                    transitions.append(StatusTransition(
-                        callsign=cs, old_status="AAR", new_status="AIRBORNE",
-                        phase="aar_complete", message=f"refueled at {curr_fuel}%",
-                        notify_title="USS TENKARA — AAR",
-                        notify_message=f"{cs} refueled, AIRBORNE",
-                    ))
-                continue
-
-        # Clean up stale entries for removed pilots
-        active_cs = {p.callsign for p in pilots}
-        for cs in list(self.sar_started):
-            if cs not in active_cs:
-                del self.sar_started[cs]
-        for cs in list(self.prev_fuel):
-            if cs not in active_cs:
-                del self.prev_fuel[cs]
 
         return transitions
 

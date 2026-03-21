@@ -129,7 +129,7 @@ def apply_legacy_state_sim(roster, legacy_agents, dismissed_tickets, state):
         if agent.session_ended:
             pilot.status = "RECOVERED"
         else:
-            pilot.status = "AIRBORNE"
+            pilot.status = "IN_FLIGHT"
 
     # Mark disappeared agents as RECOVERED
     for tid, agent_state in list(legacy_agents.items()):

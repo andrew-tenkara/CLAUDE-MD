@@ -2,80 +2,72 @@
 
 Status maps, thresholds, sounds, and display constants used by
 the dashboard, status engine, and rendering modules.
+
+Simplified state model (v2):
+  ON_DECK     — pane open, no tokens flowing
+  IN_FLIGHT   — pane open, tokens flowing
+  ON_APPROACH — tokens stopped, landing sequence playing
+  RECOVERED   — pane closed, on deck
 """
 from __future__ import annotations
 
 # ── Status display ────────────────────────────────────────────────────
 
 STATUS_ICONS = {
-    "AIRBORNE": "✈",
+    "ON_DECK": "⏸",
+    "IN_FLIGHT": "✈",
     "ON_APPROACH": "🔄",
     "RECOVERED": "✓",
-    "MAYDAY": "⚠",
-    "IDLE": "⏸",
-    "QUEUED": "◆",
-    "AAR": "⛽",
-    "SAR": "🚁",
 }
 
 STATUS_COLORS = {
-    "AIRBORNE": "green",
+    "ON_DECK": "yellow",
+    "IN_FLIGHT": "green",
     "ON_APPROACH": "dark_orange",
     "RECOVERED": "grey50",
-    "MAYDAY": "bold red",
-    "IDLE": "yellow",
-    "QUEUED": "bright_cyan",
-    "AAR": "cyan",
-    "SAR": "bold magenta",
 }
 
 STATUS_SORT_ORDER = {
-    "MAYDAY": 0,
-    "AIRBORNE": 1,
-    "IDLE": 2,
-    "QUEUED": 3,
-    "AAR": 4,
-    "SAR": 5,
-    "ON_APPROACH": 6,
-    "RECOVERED": 7,
+    "IN_FLIGHT": 0,
+    "ON_APPROACH": 1,
+    "ON_DECK": 2,
+    "RECOVERED": 3,
 }
 
 # ── Sounds ────────────────────────────────────────────────────────────
 
 # macOS sounds (built-in, no deps)
 SOUNDS = {
-    "mayday": "/System/Library/Sounds/Submarine.aiff",
     "recovered": "/System/Library/Sounds/Glass.aiff",
     "squadron_complete": "/System/Library/Sounds/Hero.aiff",
-    "bingo": "/System/Library/Sounds/Ping.aiff",
 }
 
 # ── Status mapping ────────────────────────────────────────────────────
 
 # Map sortie-state internal status → commander status
 _LEGACY_STATUS_MAP = {
-    "WORKING": "AIRBORNE",
+    "WORKING": "IN_FLIGHT",
     "PRE-REVIEW": "ON_APPROACH",
     "DONE": "RECOVERED",
 }
 
 _FLIGHT_STATUS_MAP = {
-    "PREFLIGHT": "PREFLIGHT",
-    "AIRBORNE": "AIRBORNE",
-    "HOLDING": "IDLE",
+    "PREFLIGHT": "ON_DECK",
+    "AIRBORNE": "IN_FLIGHT",
+    "HOLDING": "ON_DECK",
     "ON_APPROACH": "ON_APPROACH",
-    # Agent-reported RECOVERED is downgraded to IDLE — agents should never
-    # set RECOVERED themselves. Only the bash EXIT trap (which writes
-    # .sortie/session-ended) triggers real RECOVERED status.
-    "RECOVERED": "IDLE",
+    "RECOVERED": "ON_DECK",
+    # Legacy compat — map old statuses to new
+    "IDLE": "ON_DECK",
+    "QUEUED": "ON_DECK",
+    "MAYDAY": "RECOVERED",
+    "AAR": "IN_FLIGHT",
+    "SAR": "IN_FLIGHT",
+    "IN_FLIGHT": "IN_FLIGHT",
+    "ON_DECK": "ON_DECK",
 }
 
 # ── Thresholds ────────────────────────────────────────────────────────
 
 # Max age (seconds) for flight-status.json before it's considered stale
 _FLIGHT_STATUS_MAX_AGE = 60
-
-# Compaction recovery — fuel jump threshold and SAR animation timing
-_FUEL_JUMP_THRESHOLD = 15   # fuel gain (%) to count as compaction event
-_SAR_RECOVERY_DELAY = 8     # seconds to let crash/helo animation play before relaunch
-_AAR_RECOVERY_DELAY = 5     # seconds for refueling animation before returning to AIRBORNE

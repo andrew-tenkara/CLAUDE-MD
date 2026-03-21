@@ -75,22 +75,15 @@ class AgentEventHandler:
             prev_status = pilot.status
             new_status = prev_status  # default: no change
 
-            # IDLE → AIRBORNE: first token flow
-            if prev_status == "IDLE" and sdk_agent.total_tokens > 0:
-                new_status = "AIRBORNE"
+            # ON_DECK → IN_FLIGHT: first token flow
+            if prev_status == "ON_DECK" and sdk_agent.total_tokens > 0:
+                new_status = "IN_FLIGHT"
 
-            # AIRBORNE fuel checks
-            if prev_status == "AIRBORNE":
-                if pilot.fuel_pct <= 0:
-                    new_status = "SAR"
-                elif pilot.fuel_pct <= 30 and callsign not in ctx._reconciler.bingo_notified:
+            # IN_FLIGHT fuel check (bingo warning only)
+            if prev_status == "IN_FLIGHT":
+                if pilot.fuel_pct <= 30 and callsign not in ctx._reconciler.bingo_notified:
                     ctx._reconciler.bingo_notified.add(callsign)
-                    _play_sound("bingo")
                     ctx._add_radio(callsign, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
-
-            # AAR fuel check — can still flame out during compaction
-            if prev_status == "AAR" and pilot.fuel_pct <= 0:
-                new_status = "SAR"
 
             # Apply transition through validator
             if new_status != prev_status:
@@ -98,14 +91,11 @@ class AgentEventHandler:
                 pilot.status = validated
                 ctx._sdk_last_status_update[callsign] = now
 
-                if validated == "AIRBORNE" and prev_status == "IDLE":
-                    ctx._add_radio(callsign, "LAUNCH — tokens flowing, going AIRBORNE", "success")
-                    _notify("USS TENKARA — LAUNCH", f"{callsign} AIRBORNE")
-                elif validated == "SAR":
-                    _play_sound("mayday")
-                    ctx._add_radio(callsign, "FLAMEOUT — ZERO FUEL", "error")
+                if validated == "IN_FLIGHT" and prev_status == "ON_DECK":
+                    ctx._add_radio(callsign, "LAUNCH — tokens flowing", "success")
+                    _notify("USS TENKARA — LAUNCH", f"{callsign} IN FLIGHT")
                 elif validated == "ON_APPROACH":
-                    ctx._add_radio(callsign, "ON APPROACH — returning to base", "system")
+                    ctx._add_radio(callsign, "ON APPROACH — token flow stopped", "system")
                 elif validated != new_status:
                     ctx._add_radio(callsign, f"{prev_status} → {validated} (intermediate for {new_status})", "system")
 
@@ -156,23 +146,17 @@ class AgentEventHandler:
         # Update mood
         pilot.mood = derive_mood(pilot)
 
-        # Token consumption trigger — IDLE → AIRBORNE when tokens start flowing
-        if pilot.status == "IDLE" and pilot.tokens_used > prev_tokens:
-            pilot.status = "AIRBORNE"
-            ctx._add_radio(pilot.callsign, "LAUNCH — tokens flowing, going AIRBORNE", "success")
-            _notify("USS TENKARA — LAUNCH", f"{pilot.callsign} AIRBORNE")
+        # Token consumption trigger — ON_DECK → IN_FLIGHT when tokens start flowing
+        if pilot.status == "ON_DECK" and pilot.tokens_used > prev_tokens:
+            pilot.status = "IN_FLIGHT"
+            ctx._add_radio(pilot.callsign, "LAUNCH — tokens flowing", "success")
+            _notify("USS TENKARA — LAUNCH", f"{pilot.callsign} IN FLIGHT")
 
-        # Update status based on telemetry
-        if pilot.status == "AIRBORNE":
-            if pilot.fuel_pct <= 0:
-                pilot.status = "SAR"
-                _play_sound("mayday")
-                ctx._add_radio(callsign, "FLAMEOUT — ZERO FUEL", "error")
-            elif pilot.fuel_pct <= 30 and callsign not in ctx._reconciler.bingo_notified:
+        # IN_FLIGHT bingo warning
+        if pilot.status == "IN_FLIGHT":
+            if pilot.fuel_pct <= 30 and callsign not in ctx._reconciler.bingo_notified:
                 ctx._reconciler.bingo_notified.add(callsign)
-                _play_sound("bingo")
                 ctx._add_radio(callsign, f"BINGO FUEL — {pilot.fuel_pct}% remaining", "error")
-                _notify("USS TENKARA — BINGO", f"{callsign} at {pilot.fuel_pct}%")
 
         # Handle permission requests
         if event.type == "control_request":
@@ -267,10 +251,8 @@ class AgentEventHandler:
                     "success",
                 )
         else:
-            pilot.status = "MAYDAY"
-            _play_sound("mayday")
-            ctx._add_radio(callsign, f"MAYDAY — process exited with code {return_code}", "error")
-            _notify("USS TENKARA — MAYDAY", f"{callsign} pilot ejected (exit {return_code})")
+            pilot.status = "RECOVERED"
+            ctx._add_radio(callsign, f"RECOVERED — process exited with code {return_code}", "error")
 
             # Pipeline failure — mark mission FAILED, trigger on_failure policy
             try:
