@@ -31,7 +31,6 @@ TGT_PCT  = 75   # oscillate zone starts here
 
 RADAR_SWEEP_TICKS = 20
 _TOMBSTONE_TTL = 20   # ticks before removing a sprite that left the roster
-_DEBOUNCE_FRAMES = 3  # consecutive same-status frames before acting
 
 
 # ── Dataclass ─────────────────────────────────────────────────────────
@@ -45,9 +44,6 @@ class FlightSprite:
     anim_frame: int = 0
     ticket_id: str = ""
     tombstone_ticks: int = 0
-    # Debounce
-    stable_status: str = ""
-    stable_count: int = 0
     effective_status: str = "ON_DECK"
 
 
@@ -104,8 +100,6 @@ class FlightOpsStrip(Static):
                 tid = getattr(pilot, "ticket_id", "")
                 sprite = FlightSprite(pilot_id=pid, ticket_id=tid)
                 sprite.effective_status = status
-                sprite.stable_status = status
-                sprite.stable_count = _DEBOUNCE_FRAMES
                 if status == "IN_FLIGHT":
                     sprite.phase = "FLYING_RIGHT"
                     sprite.col = self._park_col()
@@ -116,17 +110,11 @@ class FlightOpsStrip(Static):
             else:
                 sprite = self._sprites[pid]
 
-                # Debounce: require N consecutive same-status frames
-                if status == sprite.stable_status:
-                    sprite.stable_count = min(sprite.stable_count + 1, _DEBOUNCE_FRAMES + 1)
-                else:
-                    sprite.stable_status = status
-                    sprite.stable_count = 1
+                # Trust the status directly — the dashboard's derive_status
+                # already handles freshness checks. No sprite-level debounce.
+                sprite.effective_status = status
 
-                if sprite.stable_count >= _DEBOUNCE_FRAMES:
-                    sprite.effective_status = status
-
-                # Map effective status to phase
+                # Map status to phase
                 es = sprite.effective_status
                 if es == "IN_FLIGHT":
                     if sprite.phase == "PARKED":
@@ -166,12 +154,11 @@ class FlightOpsStrip(Static):
                 # Move right every other tick
                 if sprite.anim_frame % 2 == 0:
                     sprite.col += 1
-                # Oscillate at target zone
+                # Oscillate at target zone (centered on TGT label)
                 if sprite.col >= tgt:
-                    mid = (tgt + sw - 6) // 2
                     pid_hash = sum(ord(c) for c in sprite.pilot_id) % 20
-                    offset = int(3 * (((sprite.anim_frame + pid_hash) % 20) - 10) / 10)
-                    sprite.col = mid + offset
+                    offset = int(4 * (((sprite.anim_frame + pid_hash) % 20) - 10) / 10)
+                    sprite.col = tgt + offset
 
             elif sprite.phase == "FLYING_LEFT":
                 # Move left every other tick

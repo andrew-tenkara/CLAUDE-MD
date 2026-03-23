@@ -62,20 +62,22 @@ def _read_command_override(worktree_path: str) -> Optional[str]:
 
 # ── Core status derivation ───────────────────────────────────────────
 
-# Fresh threshold — JSONL modified within this many seconds = agent is alive
-JSONL_FRESH_SECS = 30
+# Hysteresis thresholds — different thresholds for entering vs leaving IN_FLIGHT.
+# This prevents oscillation at the freshness boundary.
+JSONL_FRESH_ENTER = 10   # seconds — JSONL must be this fresh to START flying
+JSONL_FRESH_STAY  = 25   # seconds — JSONL can be this old and we STAY flying
 
 
 def derive_status(worktree_path: str, current_status: str = "") -> str:
     """Derive pilot status from filesystem evidence.
 
-    This is the single source of truth for status. Called once per pilot
-    per refresh cycle.
+    Uses hysteresis: harder to leave IN_FLIGHT than to enter it.
+    This prevents animation flickering from JSONL boundary oscillation.
 
     Priority:
       1. command.json override (XO escape hatch, consumed on read)
       2. session-ended file → RECOVERED (pane closed / agent exited)
-      3. Fresh JSONL (< 30s) → IN_FLIGHT (pane open, active)
+      3. Fresh JSONL → IN_FLIGHT (with hysteresis)
       4. Stale JSONL → ON_APPROACH if was IN_FLIGHT, else ON_DECK
       5. No JSONL → ON_DECK
     """
@@ -100,10 +102,10 @@ def derive_status(worktree_path: str, current_status: str = "") -> str:
     if age is None:
         return "ON_DECK"
 
-    if age < JSONL_FRESH_SECS:
-        # JSONL is fresh — pane open and active
-        if current_status == "IN_FLIGHT":
-            return "IN_FLIGHT"  # stay in flight through thinking pauses
+    # Hysteresis: use a wider window if already IN_FLIGHT
+    threshold = JSONL_FRESH_STAY if current_status == "IN_FLIGHT" else JSONL_FRESH_ENTER
+
+    if age < threshold:
         return "IN_FLIGHT"
 
     # 4. Stale JSONL — not actively running right now
