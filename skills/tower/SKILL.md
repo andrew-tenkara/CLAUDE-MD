@@ -25,10 +25,10 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 
 ## Flight Lifecycle
 
-1. **Deploy/Resume** → agent appears on deck as **IDLE** (orange sprite, engines warm)
-2. **Tokens start flowing** → auto-transitions to **AIRBORNE** (takeoff animation)
-3. **Work complete** → **RECOVERED** (landing animation, parked)
-4. **Crash** → **MAYDAY** / **SAR** (recovery animation)
+1. **Deploy/Resume** → agent appears on deck as **ON_DECK** (orange sprite, engines warm)
+2. **Tokens start flowing** → auto-transitions to **IN_FLIGHT** (takeoff animation)
+3. **Tokens stop** → **ON_APPROACH** (landing animation begins)
+4. **Pane closed / session ends** → **RECOVERED** (parked on deck)
 
 ## Keybindings
 
@@ -45,9 +45,8 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 | `L` | Browse Linear issues (or pilot's ticket) |
 | `M` | Relaunch Mini Boss |
 | `W` | Wave-off — hard kill + server cleanup |
-| `K` | Compact — trigger AAR refueling |
 | `X` | Recall — graceful wind-down |
-| `Z` | Dismiss — remove RECOVERED/MAYDAY from board |
+| `Z` | Dismiss — remove RECOVERED from board |
 | `F` | Toggle flight strip visibility |
 | `Q` | Quit |
 
@@ -64,20 +63,17 @@ bash ~/.claude/skills/tower/scripts/launch-commander.sh --project-dir <PROJECT_D
 Mini Boss (Opus) spawns automatically on launch in the first Pit Boss pane. It assesses open worktrees and Linear status on startup. Talk to it directly in its iTerm2 pane for:
 - Triaging tickets (model + priority assessment)
 - Complex orchestration and mission planning
-- Rearm, auto-compact, queue management
+- Queue management
 - Anything that needs conversation
 
 ## Vocabulary
 
 | Status | Meaning |
 |--------|---------|
-| IDLE | Pane open, on deck, waiting for commands |
-| AIRBORNE | Actively consuming tokens |
-| ON APPROACH | Pre-review |
-| RECOVERED | Done, parked |
-| MAYDAY | Crashed / no PID |
-| AAR | Compacting (refueling animation) |
-| SAR | Crash recovery animation |
+| ON_DECK | Pane open, not using tokens |
+| IN_FLIGHT | Pane open, actively consuming tokens |
+| ON_APPROACH | Tokens stopped, landing sequence |
+| RECOVERED | Pane closed, on deck |
 
 ## Callsign System
 

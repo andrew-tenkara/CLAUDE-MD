@@ -126,11 +126,13 @@ class LegacySync:
                     mission_title=title,
                     directive=f"(legacy worktree agent)\nBranch: {agent.branch}",
                 )
-                ctx._add_radio(
-                    pilot.callsign,
-                    f"DETECTED — {tid}: {title} ({agent.model})",
-                    "system",
-                )
+                # Only announce if worktree has fresh evidence (not stale from prior sessions)
+                if not agent.session_ended and agent.jsonl_metrics and agent.jsonl_metrics.total_tokens > 0:
+                    ctx._add_radio(
+                        pilot.callsign,
+                        f"DETECTED — {tid}: {title} ({agent.model})",
+                        "system",
+                    )
 
             # Sync worktree path from legacy state
             if agent.worktree_path and not pilot.worktree_path:

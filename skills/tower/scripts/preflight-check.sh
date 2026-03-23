@@ -150,6 +150,7 @@ if [ -d "/Applications/iTerm.app" ]; then
 else
     echo "  $FAIL iTerm2 — not installed (required for agent panes)"
     echo "    Fix: brew install --cask iterm2"
+    echo "    Or download: https://iterm2.com/downloads/stable/latest"
     issues=$((issues + 1))
 fi
 
