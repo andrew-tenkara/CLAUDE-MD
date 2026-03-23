@@ -56,14 +56,11 @@ class PriFlyHeader(Static):
             header.append("STANDBY", style="dim yellow")
 
         header.append("  │  ", style="grey50")
-        header.append(f"AIRBORNE: {airborne}", style="green")
+        header.append(f"IN FLIGHT: {airborne}", style="green")
         header.append("  │  ", style="grey50")
-        header.append(f"IDLE: {idle}", style="yellow")
+        header.append(f"ON DECK: {on_deck}", style="yellow")
         header.append("  │  ", style="grey50")
         header.append(f"RECOVERED: {recovered}", style="grey50")
-        if mayday > 0:
-            header.append("  │  ", style="grey50")
-            header.append(f"MAYDAY: {mayday}", style="bold red")
         header.append("  │  ", style="grey50")
         header.append(datetime.now().strftime("%H:%M:%S LOCAL"), style="white")
 
