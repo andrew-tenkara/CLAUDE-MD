@@ -44,7 +44,7 @@ class FlightSprite:
     anim_frame: int = 0
     ticket_id: str = ""
     tombstone_ticks: int = 0
-    effective_status: str = "ON_DECK"
+    last_tokens: int = 0       # token count at last update
 
 
 # ── Widget ────────────────────────────────────────────────────────────
@@ -88,19 +88,25 @@ class FlightOpsStrip(Static):
     # ── Public interface ─────────────────────────────────────────────
 
     def update_pilots(self, pilots: list) -> None:
-        """Sync sprites with pilot states. Debounces status flickers."""
+        """Sync sprites with pilot states.
+
+        Uses token delta as the signal — not status strings.
+        If tokens increased since last check → flying right.
+        If tokens haven't changed → flying left (land).
+        Session ended → park immediately.
+        """
         seen: set[str] = set()
 
         for pilot in pilots:
             pid = pilot.pilot_id
             seen.add(pid)
+            tokens = getattr(pilot, "tokens_used", 0)
             status = getattr(pilot, "status", "ON_DECK")
 
             if pid not in self._sprites:
                 tid = getattr(pilot, "ticket_id", "")
-                sprite = FlightSprite(pilot_id=pid, ticket_id=tid)
-                sprite.effective_status = status
-                if status == "IN_FLIGHT":
+                sprite = FlightSprite(pilot_id=pid, ticket_id=tid, last_tokens=tokens)
+                if tokens > 0 and status not in ("RECOVERED",):
                     sprite.phase = "FLYING_RIGHT"
                     sprite.col = self._park_col()
                 else:
@@ -109,24 +115,26 @@ class FlightOpsStrip(Static):
                 self._sprites[pid] = sprite
             else:
                 sprite = self._sprites[pid]
+                token_delta = tokens - sprite.last_tokens
+                sprite.last_tokens = tokens
 
-                # Trust the status directly — the dashboard's derive_status
-                # already handles freshness checks. No sprite-level debounce.
-                sprite.effective_status = status
+                # Session ended — park immediately
+                if status == "RECOVERED":
+                    if sprite.phase != "PARKED" and sprite.phase != "FLYING_LEFT":
+                        sprite.phase = "FLYING_LEFT"
+                    continue
 
-                # Map status to phase
-                es = sprite.effective_status
-                if es == "IN_FLIGHT":
+                # Tokens increased → should be flying
+                if token_delta > 0:
                     if sprite.phase == "PARKED":
                         sprite.phase = "FLYING_RIGHT"
                         sprite.col = self._park_col()
                     elif sprite.phase == "FLYING_LEFT":
-                        # Was landing, tokens resumed — go back to flying right
                         sprite.phase = "FLYING_RIGHT"
-                elif es in ("ON_DECK", "ON_APPROACH", "RECOVERED"):
+                # Tokens same → should be landing (if currently airborne)
+                else:
                     if sprite.phase == "FLYING_RIGHT":
                         sprite.phase = "FLYING_LEFT"
-                    # FLYING_LEFT will auto-park when it reaches deck
 
         # Prune sprites no longer in roster
         to_prune = []

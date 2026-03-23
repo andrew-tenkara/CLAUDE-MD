@@ -127,11 +127,14 @@ class AirBoss:
             f"--allowedTools 'mcp__linear__*' "
             f"-- "
             f"'Read {directive_file}. "
-            f"Then do these four things in order: "
-            f"1) Check {ctx._project_dir}/.claude/worktrees/ for open agents. "
-            f"2) Call mcp__linear__list_issues to fetch all Todo and In Progress tickets assigned to me. "
-            f"3) Write each ticket as a JSON mission file to {ctx._project_dir}/.sortie/mission-queue/ using Bash (mkdir -p first). "
-            f"4) Give a 5-10 line sitrep. Start now.'\n"
+            f"Then do these five things in order: "
+            f"1) Run preflight check. "
+            f"2) Check {ctx._project_dir}/.claude/worktrees/ for open agents. "
+            f"3) Call mcp__linear__list_issues to fetch all Todo and In Progress tickets assigned to me. "
+            f"4) Write each ticket as a JSON mission file to {ctx._project_dir}/.sortie/mission-queue/ using Bash (mkdir -p first). "
+            f"5) Introduce yourself to the Air Boss (your CO). Tell them who you are, what you can do for them, "
+            f"give a concise sitrep of flight deck state, and recommend the next action. "
+            f"Address them directly — they are reading your output in the Pit Boss pane. Start now.'\n"
         )
         launch_script.chmod(0o755)
 
