@@ -167,10 +167,9 @@ class FlightOpsStrip(Static):
             return "ELEVATOR"
 
         if s == "ON_DECK":
-            # On deck, engines warm, waiting
-            if sprite.phase in ("ELEVATOR", "DECK_IDLE", "DECK_PARK"):
-                return sprite.phase
-            return "DECK_IDLE"
+            # Preserve current phase — never snap a sprite back to deck.
+            # Real transitions are handled by the transition detector in update_pilots.
+            return sprite.phase
 
         return sprite.phase
 
