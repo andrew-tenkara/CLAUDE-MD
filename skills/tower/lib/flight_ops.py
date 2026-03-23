@@ -35,6 +35,8 @@ _TOMBSTONE_TTL = 20   # ticks before removing a sprite that left the roster
 
 # ── Dataclass ─────────────────────────────────────────────────────────
 
+import time as _time
+
 @dataclass
 class FlightSprite:
     pilot_id: str
@@ -45,6 +47,7 @@ class FlightSprite:
     ticket_id: str = ""
     tombstone_ticks: int = 0
     last_tokens: int = 0       # token count at last update
+    last_token_change_at: float = 0.0  # timestamp when tokens last increased
 
 
 # ── Widget ────────────────────────────────────────────────────────────
@@ -115,24 +118,31 @@ class FlightOpsStrip(Static):
                 self._sprites[pid] = sprite
             else:
                 sprite = self._sprites[pid]
-                token_delta = tokens - sprite.last_tokens
+                now = _time.time()
+
+                # Track when tokens last increased
+                if tokens > sprite.last_tokens:
+                    sprite.last_token_change_at = now
                 sprite.last_tokens = tokens
 
-                # Session ended — park immediately
+                # Session ended — land immediately
                 if status == "RECOVERED":
-                    if sprite.phase != "PARKED" and sprite.phase != "FLYING_LEFT":
+                    if sprite.phase not in ("PARKED", "FLYING_LEFT"):
                         sprite.phase = "FLYING_LEFT"
                     continue
 
-                # Tokens increased → should be flying
-                if token_delta > 0:
+                # Were tokens used in the last 30 seconds?
+                tokens_recently = (now - sprite.last_token_change_at) < 30 if sprite.last_token_change_at > 0 else False
+
+                if tokens_recently:
+                    # Should be flying
                     if sprite.phase == "PARKED":
                         sprite.phase = "FLYING_RIGHT"
                         sprite.col = self._park_col()
                     elif sprite.phase == "FLYING_LEFT":
                         sprite.phase = "FLYING_RIGHT"
-                # Tokens same → should be landing (if currently airborne)
                 else:
+                    # No tokens in 30s — land
                     if sprite.phase == "FLYING_RIGHT":
                         sprite.phase = "FLYING_LEFT"
 
