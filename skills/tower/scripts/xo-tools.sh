@@ -18,6 +18,9 @@
 #   clear-stale                               — Dismiss all RECOVERED agents
 #   queue-list                                — Show mission queue
 #   queue-remove <ticket-id>                  — Remove from queue
+#   server-cmd                                — Show current dev server command
+#   server-cmd set <command>                  — Set dev server command
+#   server-cmd detect                         — Re-run auto-detection
 
 set -euo pipefail
 
@@ -627,6 +630,114 @@ print(int(time.time()) - d.get('timestamp', 0))
     echo "  .sortie: ${sortie_size:-0B}"
 }
 
+# ── Server command management ─────────────────────────────────────────
+
+SORTIE_LIB_DIR="$(cd "$SCRIPT_DIR/../../sortie/lib" && pwd)"
+
+cmd_server_cmd() {
+    local subcmd="${1:-show}"
+    shift 2>/dev/null || true
+
+    local config_file="$SORTIE_DIR/server-cmd.json"
+
+    case "$subcmd" in
+        show|"")
+            echo "═══ DEV SERVER COMMAND ═══"
+            if [ -f "$config_file" ]; then
+                python3 -c "
+import json
+d = json.load(open('$config_file'))
+cmd = d.get('cmd', '(not set)')
+src = d.get('detected_from', 'unknown')
+pkg = d.get('pkg_mgr', '?')
+install = d.get('install_cmd', '(none)')
+detected = d.get('detected', False)
+origin = 'auto-detected' if detected else 'user-provided'
+print(f'  Command:    {cmd}')
+print(f'  Install:    {install}')
+print(f'  Pkg mgr:    {pkg}')
+print(f'  Source:     {src} ({origin})')
+print(f'  Config:     $config_file')
+" 2>/dev/null
+            else
+                echo "  Not configured."
+                echo "  Run: server-cmd detect   — to auto-detect"
+                echo "  Run: server-cmd set <cmd> — to set manually"
+            fi
+            ;;
+
+        set)
+            local cmd_str="$*"
+            if [ -z "$cmd_str" ]; then
+                echo "Usage: server-cmd set <command>"
+                echo "Examples:"
+                echo "  server-cmd set 'pnpm run dev'"
+                echo "  server-cmd set 'npm start'"
+                echo "  server-cmd set 'python manage.py runserver'"
+                echo "  server-cmd set 'go run ./cmd/server'"
+                echo "  server-cmd set 'docker compose up'"
+                return 1
+            fi
+            mkdir -p "$SORTIE_DIR"
+            python3 -c "
+import json
+config = {
+    'cmd': '''$cmd_str''',
+    'install_cmd': '',
+    'pkg_mgr': 'custom',
+    'detected_from': 'user-provided',
+    'detected': False
+}
+with open('$config_file', 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+print('✓ Server command saved:')
+print(f'  {config[\"cmd\"]}')
+print(f'  Config: $config_file')
+print()
+print('V key will now use this command for all worktree dev servers.')
+" 2>/dev/null
+            ;;
+
+        detect)
+            echo "Running auto-detection against $PROJECT_DIR..."
+            mkdir -p "$SORTIE_DIR"
+            # Remove cached config so detection runs fresh
+            rm -f "$config_file"
+            python3 -c "
+import sys
+sys.path.insert(0, '$SORTIE_LIB_DIR')
+from detect_server import detect_server_cmd
+import json
+
+result = detect_server_cmd('$PROJECT_DIR')
+if result:
+    print('✓ Auto-detected:')
+    print(f'  Command:  {result[\"cmd\"]}')
+    print(f'  Install:  {result.get(\"install_cmd\", \"(none)\")}')
+    print(f'  Pkg mgr:  {result.get(\"pkg_mgr\", \"?\")}')
+    print(f'  Source:   {result.get(\"detected_from\", \"unknown\")}')
+    print(f'  Saved to: $config_file')
+else:
+    print('✗ Could not auto-detect server command.')
+    print('  No package.json scripts, manage.py, pyproject.toml, Gemfile,')
+    print('  go.mod, docker-compose.yml, or Makefile dev targets found.')
+    print()
+    print('  Set it manually:')
+    print(\"  bash xo-tools.sh server-cmd set 'your-command-here'\")
+" 2>/dev/null
+            ;;
+
+        *)
+            echo "Usage: server-cmd [show|set|detect]"
+            echo "  show               Show current dev server command"
+            echo "  set <command>      Set dev server command manually"
+            echo "  detect             Re-run auto-detection (clears cache)"
+            return 1
+            ;;
+    esac
+}
+
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 cmd="${1:-help}"
@@ -646,6 +757,7 @@ case "$cmd" in
     reassign-model)    cmd_reassign_model "$@" ;;
     inject)            cmd_inject "$@" ;;
     health)            cmd_health ;;
+    server-cmd)        cmd_server_cmd "$@" ;;
     help|--help|-h)
         echo "USS Tenkara — XO Tools"
         echo ""
@@ -661,6 +773,11 @@ case "$cmd" in
         echo "  tail-agent <ticket>                     Tail agent's JSONL stream live"
         echo "  sentinel-status                         Sentinel health check"
         echo "  health                                  Full system health report"
+        echo ""
+        echo "Dev Server:"
+        echo "  server-cmd                              Show current dev server command"
+        echo "  server-cmd set <command>                Set dev server command manually"
+        echo "  server-cmd detect                       Re-run auto-detection (clears cache)"
         echo ""
         echo "Maintenance:"
         echo "  kick-sync                               Force dashboard re-sync"

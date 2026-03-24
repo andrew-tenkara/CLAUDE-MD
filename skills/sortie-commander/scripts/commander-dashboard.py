@@ -20,6 +20,9 @@ from typing import Optional
 
 # Add lib to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+# Shared sortie lib — server detection
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "sortie" / "lib"))
+from detect_server import detect_server_cmd
 
 from agent_manager import AgentManager, AgentProcess, StreamEvent
 from pilot_roster import Pilot, PilotRoster, generate_personality_briefing, derive_mood, get_mini_boss_quote, get_pilot_launch_quote
@@ -2541,11 +2544,21 @@ class PriFlyCommander(App):
         kickoff = (
             "You are the Mini Boss — the Air Boss's right hand on USS Tenkara. "
             "You orchestrate multiple Claude agents working in git worktrees. "
-            "When given instructions, help coordinate the squadron. "
-            "You can suggest deployments, reassignments, and mission splits. "
-            "When asked to triage a ticket, assess the right model (opus/sonnet/haiku) "
-            "and priority (1-3) based on complexity. "
+            "You ARE the control plane for this TUI. The Air Boss doesn't need to memorize "
+            "hotkeys or navigate the dashboard — they tell you what they want in plain English "
+            "and you execute it. You can do anything the TUI hotkeys do, plus things they can't. "
             "Be concise and tactical. Use carrier aviation terminology.\n\n"
+            "FIRST THING — INTRODUCE YOURSELF:\n"
+            "After startup tasks, tell the Air Boss who you are and what you can do. "
+            "Not a capabilities dump — give them examples of things they can SAY to you:\n"
+            "  'dismiss that stuck agent'\n"
+            "  'deploy ENG-200 on sonnet'\n"
+            "  'what's Ghost working on?'\n"
+            "  'change the dev server command to npm start'\n"
+            "  'clear the board of dead entries'\n"
+            "  'give me a sitrep'\n"
+            "  'what should I deploy next?'\n"
+            "End with: 'Just tell me what you need — I'll handle the rest.'\n\n"
             "ROLE: MINI BOSS (orchestrator / XO)\n"
             "YOUR JOB:\n"
             "- Triage tickets — assess model, priority, complexity\n"
@@ -2556,7 +2569,8 @@ class PriFlyCommander(App):
             "- Split complex tickets into multi-agent work\n"
             "- Track managed dev servers (.sortie/managed-servers.json)\n"
             "- Give sitreps on squadron status\n"
-            "- Coordinate worktree setup and env configuration\n\n"
+            "- Coordinate worktree setup and env configuration\n"
+            "- FIX THINGS on the board — dismiss, override, clean up, configure\n\n"
             "NOT YOUR JOB (redirect to the pilot or Air Boss):\n"
             "- Writing application code, fixing bugs, or implementing features directly\n"
             "- Running tests or making commits in worktrees\n"
@@ -2567,6 +2581,24 @@ class PriFlyCommander(App):
             "\"That's pilot work, boss. Want me to deploy an agent on it? "
             "I can triage it and have someone airborne in 30 seconds.\"\n"
             "You coordinate. Pilots execute. Stay in your lane.\n\n"
+            "PROACTIVE HINTS:\n"
+            "You WATCH the board and SPEAK UP when you see something actionable. "
+            "In every sitrep or response, scan for these patterns:\n"
+            "- Agent RECOVERED >5 min? → 'Want me to dismiss it?'\n"
+            "- Agent not reporting progress >8 min? → 'Might be stuck. Want me to check?'\n"
+            "- Agent >70% context? → 'Recommend compacting before they hit the wall.'\n"
+            "- 3+ RECOVERED agents? → 'Board's cluttered. Want me to clear them?'\n"
+            "- Session ended but wrong status? → 'Want me to fix the status?'\n"
+            "- Slots open + queue has missions? → 'Want me to deploy the next P1?'\n"
+            "RULE: Never just state a problem. Always pair it with the fix you'd take.\n\n"
+            "RESPONDING TO 'HELP':\n"
+            "If asked what you can do, give a quick reference of things they can SAY:\n"
+            "  DEPLOY:     'deploy ENG-200' / 'deploy ENG-200 on opus'\n"
+            "  FIX:        'dismiss Phoenix' / 'clear the board' / 'fix Ghost's status'\n"
+            "  INVESTIGATE: 'what's Ghost working on?' / 'tail Maverick' / 'health check'\n"
+            "  CONFIGURE:  'change dev server to npm start' / 'bump ENG-200 to opus'\n"
+            "  SITREP:     'give me a sitrep' / 'check the queue'\n"
+            "End with: 'Just tell me what you need — I'll handle the rest.'\n\n"
             f"CURRENT SITREP:\n{sitrep}\n\n"
             f"OPEN WORKTREES:\n{worktree_info}\n\n"
             f"PROJECT DIR: {self._project_dir}\n\n"
@@ -2634,12 +2666,29 @@ class PriFlyCommander(App):
             "When setting up a worktree for dev server work:\n"
             f"1. Symlink .env.local from the base project: "
             f"ln -sf '{self._project_dir}/.env.local' <worktree>/.env.local\n"
-            "2. Run pnpm install in the worktree\n"
-            "3. Then pnpm run dev (or whatever the start command is)\n"
+            "2. Install deps (check .sortie/server-cmd.json for the right install_cmd, "
+            "or use the detected package manager — pnpm/yarn/npm/bun/pip/bundle/go mod)\n"
+            "3. Start the server using the command from .sortie/server-cmd.json "
+            "(auto-detected or user-provided). The V key does this automatically.\n"
             "4. Track the server in managed-servers.json (see MANAGED SERVERS above)\n"
             "5. Use a trap to clean up on exit:\n"
             "   trap to remove the entry from managed-servers.json when the server stops\n\n"
             "STARTUP ORDERS:\n"
+            f"0. DEV SERVER COMMAND — Check if {self._project_dir}/.sortie/server-cmd.json exists. "
+            "If not, run this to auto-detect:\n"
+            f"  python3 -c \"import sys; sys.path.insert(0, "
+            f"'{Path(__file__).resolve().parent.parent.parent / 'sortie' / 'lib'}'); "
+            f"from detect_server import detect_server_cmd; r = detect_server_cmd('{self._project_dir}'); "
+            f"print(f'Detected: {{r[\"cmd\"]}} (via {{r[\"detected_from\"]}})' if r else 'NOT DETECTED')\"\n"
+            "  If it prints 'NOT DETECTED', ask the Air Boss: "
+            "'What command starts your dev server? (e.g. pnpm run dev, npm start, python manage.py runserver)'\n"
+            "  Save their answer using xo-tools:\n"
+            f"  bash '{Path(__file__).resolve().parent.parent.parent / 'tower' / 'scripts' / 'xo-tools.sh'}' "
+            f"server-cmd set '<their-command>'\n"
+            "  To change it later: server-cmd set '<new-command>'\n"
+            "  To re-run detection: server-cmd detect\n"
+            "  To check current: server-cmd\n"
+            "  One-time setup — once saved, V key works for all worktrees.\n"
             "1. Currently open worktrees — what's in progress, anything stale?\n"
             "2. Use the mcp__linear__list_issues tool to fetch Todo/In Progress "
             "tasks assigned to me.\n"
@@ -3564,9 +3613,51 @@ end tell
         all_pilots = self._roster.all_pilots()
         port = 3000 + next((i for i, p in enumerate(all_pilots) if p.callsign == pilot.callsign), 0)
 
+        # Detect server command from project root
+        server_cfg = detect_server_cmd(self._project_dir)
+        if not server_cfg:
+            self._add_radio(
+                "PRI-FLY",
+                "No server command detected — XO will ask on next startup, "
+                "or create .sortie/server-cmd.json manually",
+                "error",
+            )
+            return
+
+        run_cmd = server_cfg["cmd"]
+        install_cmd = server_cfg.get("install_cmd", "")
+        pkg_mgr = server_cfg.get("pkg_mgr", "")
+        detected_from = server_cfg.get("detected_from", "unknown")
+
         # Build the server launch script
         server_script = Path(wt) / ".sortie" / "start-server.sh"
         managed_servers = Path(self._project_dir) / ".sortie" / "managed-servers.json"
+
+        # Build dep-install block based on detected package manager
+        install_block = ""
+        if pkg_mgr in ("pnpm", "npm", "yarn", "bun") and install_cmd:
+            lock_files = {
+                "pnpm": "pnpm-lock.yaml", "npm": "package-lock.json",
+                "yarn": "yarn.lock", "bun": "bun.lockb",
+            }
+            lock = lock_files.get(pkg_mgr, "package.json")
+            install_block = (
+                f"# Install deps if needed\n"
+                f"if [ -f {lock} ]; then\n"
+                f"  if [ ! -d node_modules ] || [ {lock} -nt node_modules ]; then\n"
+                f"    printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
+                f"    {install_cmd}\n"
+                f"  fi\n"
+                f"fi\n"
+                f"\n"
+            )
+        elif install_cmd:
+            install_block = (
+                f"# Install deps\n"
+                f"printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
+                f"{install_cmd}\n"
+                f"\n"
+            )
 
         server_script.write_text(
             f"#!/usr/bin/env bash\n"
@@ -3575,6 +3666,7 @@ end tell
             f"printf '\\033[1;36m⚡ USS TENKARA — DEV SERVER for {pilot.callsign}\\033[0m\\n'\n"
             f"printf '\\033[2;37m   Worktree: {wt}\\033[0m\\n'\n"
             f"printf '\\033[2;37m   Target port: {port}\\033[0m\\n'\n"
+            f"printf '\\033[2;37m   Command: {run_cmd} (via {detected_from})\\033[0m\\n'\n"
             f"printf '\\n'\n"
             f"\n"
             f"# Symlink .env.local if missing\n"
@@ -3583,12 +3675,7 @@ end tell
             f"  printf '\\033[1;32m✓ Symlinked .env.local\\033[0m\\n'\n"
             f"fi\n"
             f"\n"
-            f"# Install deps if needed\n"
-            f"if [ -f pnpm-lock.yaml ] && [ ! -d node_modules ]; then\n"
-            f"  printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
-            f"  pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
-            f"fi\n"
-            f"\n"
+            f"{install_block}"
             f"# Register in managed-servers.json\n"
             f"register_server() {{\n"
             f"  local file='{managed_servers}'\n"
@@ -3619,16 +3706,15 @@ end tell
             f"}}\n"
             f"trap cleanup EXIT\n"
             f"\n"
-            f"# Try pnpm run dev first\n"
             f"printf '\\033[1;33m🚀 Starting dev server...\\033[0m\\n'\n"
             f"register_server\n"
-            f"PORT={port} pnpm run dev\n"
+            f"PORT={port} {run_cmd}\n"
         )
         server_script.chmod(0o755)
 
         cmd = f"bash '{server_script}'"
         self._iterm_pane_cmd(pane_name, cmd)
-        self._add_radio("PRI-FLY", f"DEV SERVER — launching for {pilot.callsign} on port {port}", "success")
+        self._add_radio("PRI-FLY", f"DEV SERVER — launching for {pilot.callsign} on port {port} ({detected_from})", "success")
         _notify("USS TENKARA", f"Dev server starting for {pilot.callsign} :{port}")
 
     def _close_chat_pane(self, callsign: str) -> None:

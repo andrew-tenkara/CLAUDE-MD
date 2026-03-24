@@ -26,6 +26,7 @@ SCOPE=""
 REQUIREMENTS=""
 ACCEPTANCE_CRITERIA=""
 PRIOR_WORK=""
+CALLSIGN=""
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
@@ -41,6 +42,7 @@ while [[ $# -gt 0 ]]; do
     --requirements)   REQUIREMENTS="$2"; shift 2 ;;
     --acceptance-criteria) ACCEPTANCE_CRITERIA="$2"; shift 2 ;;
     --prior-work)          PRIOR_WORK="$2"; shift 2 ;;
+    --callsign)            CALLSIGN="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -80,6 +82,7 @@ replacements = {
     "{{REQUIREMENTS}}":        """${REQUIREMENTS:-See ticket description above}""",
     "{{ACCEPTANCE_CRITERIA}}": """${ACCEPTANCE_CRITERIA:-See ticket description above}""",
     "{{PRIOR_WORK}}":          """${PRIOR_WORK:-}""",
+    "{{CALLSIGN}}":            """${CALLSIGN:-Pilot}""",
 }
 
 with open(template_path, "r") as f:

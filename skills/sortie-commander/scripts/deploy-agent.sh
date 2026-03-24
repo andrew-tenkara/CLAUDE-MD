@@ -24,12 +24,16 @@ TICKET_ID=""
 MODEL="sonnet"
 DIRECTIVE=""
 PROJECT_DIR=""
+CALLSIGN=""
+BRANCH_NAME=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model)       MODEL="$2"; shift 2 ;;
     --directive)   DIRECTIVE="$2"; shift 2 ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
+    --callsign)    CALLSIGN="$2"; shift 2 ;;
+    --branch)      BRANCH_NAME="$2"; shift 2 ;;
     -*)            echo "Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
@@ -51,7 +55,9 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 
 # ── Create worktree ──────────────────────────────────────────────────
-BRANCH_NAME="sortie/${TICKET_ID}"
+if [ -z "$BRANCH_NAME" ]; then
+  BRANCH_NAME="sortie/${TICKET_ID}"
+fi
 WORKTREE_PATH=""
 
 if [ -x "${SORTIE_SCRIPTS}/create-worktree.sh" ]; then
@@ -85,9 +91,31 @@ echo "WORKTREE:${WORKTREE_PATH}"
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
 
+# Write callsign to .sortie/ if provided
+if [ -n "$CALLSIGN" ]; then
+  echo "$CALLSIGN" > "${SORTIE_DIR}/callsign.txt"
+fi
+CALLSIGN_DISPLAY="${CALLSIGN:-Pilot}"
+
 # Directive
 if [ -n "$DIRECTIVE" ]; then
   cat > "${SORTIE_DIR}/directive.md" << DIRECTIVE_EOF
+## Who You Are
+You are a Claude Code agent — an autonomous AI software engineer running in a dedicated
+git worktree. You are one pilot in a fleet of agents managed by USS Tenkara, a TUI-based
+orchestration system. The Air Boss (human operator) watches all agents from a dashboard.
+The Mini Boss (XO, an Opus-powered orchestrator) coordinates the fleet and can inject
+directives to you.
+
+Your callsign is **${CALLSIGN_DISPLAY}**. Use it when logging progress.
+
+Your worktree is an isolated copy of the repo — you can edit, commit, and push without
+affecting other agents. Your branch is scoped to your ticket. The .sortie/ directory in
+your worktree root is your protocol interface — progress logs, flight status, and directives
+all live there.
+
+---
+
 ${DIRECTIVE}
 
 ---
@@ -145,10 +173,38 @@ if [ ! -f .env.local ] && [ -f "${PROJECT_DIR}/.env.local" ]; then
   echo "ENV:symlinked .env.local"
 fi
 
-# Install deps
+# Install deps — detect package manager from lock files
 if [ -f pnpm-lock.yaml ] && [ ! -d node_modules ]; then
-  echo "DEPS:installing..."
+  echo "DEPS:installing (pnpm)..."
   pnpm install --frozen-lockfile 2>/dev/null || pnpm install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f yarn.lock ] && [ ! -d node_modules ]; then
+  echo "DEPS:installing (yarn)..."
+  yarn install --frozen-lockfile 2>/dev/null || yarn install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f package-lock.json ] && [ ! -d node_modules ]; then
+  echo "DEPS:installing (npm)..."
+  npm ci 2>/dev/null || npm install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f bun.lockb ] || [ -f bun.lock ] && [ ! -d node_modules ]; then
+  echo "DEPS:installing (bun)..."
+  bun install --frozen-lockfile 2>/dev/null || bun install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f requirements.txt ]; then
+  echo "DEPS:installing (pip)..."
+  pip install -r requirements.txt 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f Pipfile ]; then
+  echo "DEPS:installing (pipenv)..."
+  pipenv install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f Gemfile ]; then
+  echo "DEPS:installing (bundler)..."
+  bundle install 2>/dev/null || true
+  echo "DEPS:done"
+elif [ -f go.mod ]; then
+  echo "DEPS:installing (go)..."
+  go mod download 2>/dev/null || true
   echo "DEPS:done"
 fi
 

@@ -16,6 +16,10 @@ import re as _re
 from pathlib import Path
 from typing import Optional
 
+# Shared sortie lib — server detection
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "sortie" / "lib"))
+from detect_server import detect_server_cmd
+
 log = logging.getLogger(__name__)
 
 
@@ -166,8 +170,46 @@ class Actions:
         all_pilots = ctx._roster.all_pilots()
         port = 3000 + next((i for i, p in enumerate(all_pilots) if p.callsign == pilot.callsign), 0)
 
+        # Detect server command from project root
+        server_cfg = detect_server_cmd(ctx._project_dir)
+        if not server_cfg:
+            ctx._add_radio(
+                "PRI-FLY",
+                "No server command detected — XO will ask on next startup, "
+                "or create .sortie/server-cmd.json manually",
+                "error",
+            )
+            return
+
+        run_cmd = server_cfg["cmd"]
+        install_cmd = server_cfg.get("install_cmd", "")
+        pkg_mgr = server_cfg.get("pkg_mgr", "")
+        detected_from = server_cfg.get("detected_from", "unknown")
+
         server_script = Path(wt) / ".sortie" / "start-server.sh"
         managed_servers = Path(ctx._project_dir) / ".sortie" / "managed-servers.json"
+
+        # Build dep-install block based on detected package manager
+        install_block = ""
+        if pkg_mgr in ("pnpm", "npm", "yarn", "bun") and install_cmd:
+            lock_files = {
+                "pnpm": "pnpm-lock.yaml", "npm": "package-lock.json",
+                "yarn": "yarn.lock", "bun": "bun.lockb",
+            }
+            lock = lock_files.get(pkg_mgr, "package.json")
+            install_block = (
+                f"if [ -f {lock} ]; then\n"
+                f"  if [ ! -d node_modules ] || [ {lock} -nt node_modules ]; then\n"
+                f"    printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
+                f"    {install_cmd}\n"
+                f"  fi\n"
+                f"fi\n\n"
+            )
+        elif install_cmd:
+            install_block = (
+                f"printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
+                f"{install_cmd}\n\n"
+            )
 
         server_script.write_text(
             f"#!/usr/bin/env bash\n"
@@ -175,17 +217,13 @@ class Actions:
             f"printf '\\033[1;36m⚡ USS TENKARA — DEV SERVER for {pilot.callsign}\\033[0m\\n'\n"
             f"printf '\\033[2;37m   Worktree: {wt}\\033[0m\\n'\n"
             f"printf '\\033[2;37m   Target port: {port}\\033[0m\\n'\n"
+            f"printf '\\033[2;37m   Command: {run_cmd} (via {detected_from})\\033[0m\\n'\n"
             f"printf '\\n'\n\n"
             f"if [ ! -f .env.local ] && [ -f '{ctx._project_dir}/.env.local' ]; then\n"
             f"  ln -sf '{ctx._project_dir}/.env.local' .env.local\n"
             f"  printf '\\033[1;32m✓ Symlinked .env.local\\033[0m\\n'\n"
             f"fi\n\n"
-            f"if [ -f pnpm-lock.yaml ]; then\n"
-            f"  if [ ! -d node_modules ] || [ pnpm-lock.yaml -nt node_modules ]; then\n"
-            f"    printf '\\033[1;33m📦 Installing dependencies...\\033[0m\\n'\n"
-            f"    pnpm install --frozen-lockfile 2>/dev/null || pnpm install\n"
-            f"  fi\n"
-            f"fi\n\n"
+            f"{install_block}"
             f"register_server() {{\n"
             f"  local file='{managed_servers}'\n"
             f"  mkdir -p \"$(dirname \"$file\")\"\n"
@@ -210,12 +248,12 @@ class Actions:
             f"trap cleanup EXIT\n\n"
             f"printf '\\033[1;33m🚀 Starting dev server...\\033[0m\\n'\n"
             f"register_server\n"
-            f"PORT={port} pnpm run dev\n"
+            f"PORT={port} {run_cmd}\n"
         )
         server_script.chmod(0o755)
 
         ctx._iterm_pane_cmd(pane_name, f"bash '{server_script}'")
-        ctx._add_radio("PRI-FLY", f"DEV SERVER — launching for {pilot.callsign} on port {port}", "success")
+        ctx._add_radio("PRI-FLY", f"DEV SERVER — launching for {pilot.callsign} on port {port} ({detected_from})", "success")
         _notify("USS TENKARA", f"Dev server starting for {pilot.callsign} :{port}")
 
     # ── Linear browse (reads config, opens browser) ──────────────────
