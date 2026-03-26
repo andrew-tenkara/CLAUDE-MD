@@ -74,7 +74,9 @@ class ItermBridge:
                     "sleep 1\n"
                 )
                 splash_script.chmod(0o755)
-                cmd = f"bash '{splash_script}' && bash '{launch_script}'"
+                # Route through Headroom if running — env var inherited by child bash launch.sh
+                headroom = "if curl -sf 'http://localhost:8787/health' >/dev/null 2>&1; then export ANTHROPIC_BASE_URL='http://localhost:8787'; fi"
+                cmd = f"{headroom} && bash '{splash_script}' && bash '{launch_script}'"
                 self.pane_cmd(pilot.callsign, cmd)
                 self.ctx._watch_agent_jsonl(pilot.worktree_path)
                 self.ctx._add_radio(pilot.callsign, "Launching from prepped worktree", "success")
@@ -247,6 +249,11 @@ class ItermBridge:
             f"  touch .sortie/session-ended\n"
             f"}}\n"
             f"trap cleanup_flight EXIT\n"
+            f"\n"
+            f"# Route through Headroom proxy if running (context compression)\n"
+            f"if curl -sf 'http://localhost:8787/health' >/dev/null 2>&1; then\n"
+            f"  export ANTHROPIC_BASE_URL='http://localhost:8787'\n"
+            f"fi\n"
             f"\n"
             f"{splash}"
             f"claude --model {pilot.model} '{kickoff}' "
