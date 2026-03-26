@@ -49,25 +49,28 @@ HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
 HEADROOM_LOG="/tmp/uss-tenkara/headroom.log"
 mkdir -p /tmp/uss-tenkara
 
-# Kill stale headroom if running
-if [ -f "$HEADROOM_PID_FILE" ]; then
-  OLD_PID=$(cat "$HEADROOM_PID_FILE")
-  kill "$OLD_PID" 2>/dev/null || true
-  rm -f "$HEADROOM_PID_FILE"
+# Kill stale headroom if running — use pgrep as authoritative source (PID file may be stale)
+STALE_PID=$(pgrep -f "headroom proxy" | head -1)
+if [ -n "$STALE_PID" ]; then
+  kill "$STALE_PID" 2>/dev/null || true
 fi
+rm -f "$HEADROOM_PID_FILE"
 
 if command -v headroom &>/dev/null; then
   headroom proxy --port "$HEADROOM_PORT" > "$HEADROOM_LOG" 2>&1 &
-  echo $! > "$HEADROOM_PID_FILE"
   # Wait for proxy to be ready (ML model preload takes ~6s)
   for i in $(seq 1 10); do
     if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
-      echo "HEADROOM:running on port ${HEADROOM_PORT} (pid $(cat "$HEADROOM_PID_FILE"))"
       break
     fi
     sleep 1
   done
-  if ! curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
+  if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
+    # headroom forks a child — use pgrep to get the real worker PID
+    REAL_PID=$(pgrep -f "headroom proxy" | head -1)
+    echo "${REAL_PID:-unknown}" > "$HEADROOM_PID_FILE"
+    echo "HEADROOM:running on port ${HEADROOM_PORT} (pid ${REAL_PID:-?})"
+  else
     echo "HEADROOM:WARNING — proxy failed to start, pilots will connect directly" >&2
     rm -f "$HEADROOM_PID_FILE"
   fi

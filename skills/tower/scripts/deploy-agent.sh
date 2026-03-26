@@ -246,8 +246,8 @@ cleanup_flight() {
 trap cleanup_flight EXIT
 
 # Route through Headroom proxy if running (context compression)
-HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
-if [ -f "\$HEADROOM_PID_FILE" ] && kill -0 "\$(cat "\$HEADROOM_PID_FILE")" 2>/dev/null; then
+# Health check instead of PID: headroom forks a child, so $! captures a dead parent PID
+if curl -sf "http://localhost:8787/health" >/dev/null 2>&1; then
   export ANTHROPIC_BASE_URL="http://localhost:8787"
 fi
 
