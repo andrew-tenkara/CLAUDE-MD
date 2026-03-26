@@ -71,3 +71,10 @@ _FLIGHT_STATUS_MAP = {
 
 # Max age (seconds) for flight-status.json before it's considered stale
 _FLIGHT_STATUS_MAX_AGE = 60
+
+# ── Token budget ─────────────────────────────────────────────────────
+
+# Default token budget per agent (total tokens across all turns)
+TOKEN_BUDGET_DEFAULT = 150_000
+TOKEN_BUDGET_WARN_PCT = 0.70    # 70% — send "wrap up" advisory
+TOKEN_BUDGET_LAND_PCT = 0.90    # 90% — trigger landing sequence

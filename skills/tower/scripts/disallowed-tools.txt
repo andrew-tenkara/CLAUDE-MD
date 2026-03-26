@@ -18,3 +18,8 @@
 'Bash(chmod:*)'
 'Bash(chown:*)'
 'mcp__linear__*'
+'mcp__slack__*'
+'mcp__notion__*'
+'mcp__exa__*'
+'mcp__playwright__*'
+'mcp__claude-in-chrome__*'

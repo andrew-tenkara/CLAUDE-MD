@@ -22,8 +22,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from classify import classify, compress_events
+from constants import TOKEN_BUDGET_DEFAULT, TOKEN_BUDGET_WARN_PCT, TOKEN_BUDGET_LAND_PCT
 from gate import gate_transition
-from parse_jsonl_metrics import encode_project_path, CLAUDE_PROJECTS_DIR, find_latest_session_file
+from parse_jsonl_metrics import encode_project_path, CLAUDE_PROJECTS_DIR, find_latest_session_file, parse_jsonl_metrics
 
 log = logging.getLogger(__name__)
 
@@ -294,6 +295,37 @@ class InlineSentinel:
                     "status": ws.confirmed_status,
                     "phase": ws.confirmed_phase,
                 })
+
+            self._check_budget(ws)
+
+    def _check_budget(self, ws: WatchState) -> None:
+        """Check token budget and write warnings to sortie comm channel."""
+        wt_path = ws.worktree_path
+        if not Path(wt_path).is_absolute():
+            wt_path = str(Path(self._project_dir) / wt_path)
+
+        # Read budget (default if not set)
+        budget_file = Path(wt_path) / ".sortie" / "budget.txt"
+        try:
+            budget = int(budget_file.read_text().strip())
+        except (OSError, ValueError):
+            budget = TOKEN_BUDGET_DEFAULT
+
+        metrics = parse_jsonl_metrics(wt_path)
+        if metrics is None:
+            return
+
+        pct = metrics.total_tokens / budget if budget > 0 else 0
+
+        fuel_file = Path(wt_path) / ".sortie" / "fuel-warning.txt"
+        if pct >= TOKEN_BUDGET_LAND_PCT:
+            if not fuel_file.exists() or fuel_file.read_text().strip() != "BINGO":
+                fuel_file.write_text("BINGO")
+                log.info("BINGO FUEL for %s (%.0f%% of %d)", ws.ticket_id, pct * 100, budget)
+        elif pct >= TOKEN_BUDGET_WARN_PCT:
+            if not fuel_file.exists() or fuel_file.read_text().strip() != "WARNING":
+                fuel_file.write_text("WARNING")
+                log.info("FUEL WARNING for %s (%.0f%% of %d)", ws.ticket_id, pct * 100, budget)
 
     def _write_status(self, worktree_path: str, status: dict) -> None:
         """Write sentinel-status.json atomically."""

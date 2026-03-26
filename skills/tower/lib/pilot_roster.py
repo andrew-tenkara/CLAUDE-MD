@@ -251,6 +251,26 @@ def generate_personality_briefing(pilot: Pilot) -> str:
     )
 
 
+def generate_compact_briefing(pilot: Pilot) -> str:
+    """Token-efficient briefing (~80 tokens vs ~625 for full briefing).
+
+    Use for Haiku agents where context is most constrained.
+    Omits chain of command, personality details, and protocol — the base
+    model already knows what a pilot, PR, and git worktree are.
+    """
+    voice, _, _ = TRAIT_PROFILES.get(
+        pilot.trait, ("Solid pilot.", "", "")
+    )
+    return (
+        f"You are {pilot.callsign}, {pilot.squadron} Sqn, USS Tenkara. "
+        f"Trait: {pilot.trait}. {voice}\n"
+        "Role: PILOT. Execute directive, implement, test, PR. "
+        "Track progress in .sortie/progress.md.\n"
+        "Not your job: triage, orchestration, other agents → redirect to Mini Boss.\n"
+        "Let your personality show in status reports and problem descriptions."
+    )
+
+
 def derive_mood(pilot: Pilot) -> str:
     if (
         pilot.error_count > 0

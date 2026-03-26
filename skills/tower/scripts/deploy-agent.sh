@@ -28,6 +28,7 @@ DIRECTIVE=""
 PROJECT_DIR=""
 BRANCH_OVERRIDE=""
 NO_LAUNCH=false
+BUDGET=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     --branch)      BRANCH_OVERRIDE="$2"; shift 2 ;;
     --no-launch)   NO_LAUNCH=true; shift ;;
+    --budget)      BUDGET="$2"; shift 2 ;;
     -*)            echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
@@ -130,15 +132,20 @@ echo "WORKTREE:${WORKTREE_PATH}"
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
 
-# Directive
+# ── Copy .claudeignore for token efficiency ──────────────────────────
+CLAUDEIGNORE_SRC="${PROJECT_DIR}/.claudeignore"
+CLAUDEIGNORE_DST="${WORKTREE_PATH}/.claudeignore"
+if [ -f "$CLAUDEIGNORE_SRC" ] && [ ! -f "$CLAUDEIGNORE_DST" ]; then
+  cp "$CLAUDEIGNORE_SRC" "$CLAUDEIGNORE_DST"
+  echo "IGNORE:copied .claudeignore"
+fi
+
+# Directive — static content first (cache-friendly), dynamic mission last
 if [ -n "$DIRECTIVE" ]; then
   cat > "${SORTIE_DIR}/directive.md" << DIRECTIVE_EOF
-${DIRECTIVE}
-
----
 ## Role: PILOT (individual contributor)
 YOUR JOB:
-- Execute the directive above — implement, fix, test, PR
+- Execute the mission directive below — implement, fix, test, PR
 - Write code, run tests, commit changes, open PRs
 - Read and understand the codebase in your worktree
 - Track progress in .sortie/progress.md
@@ -151,7 +158,7 @@ NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 - Making architectural decisions that affect other tickets
 
 If asked to do something outside your role, say:
-"That's Mini Boss territory — I'm a pilot, not an orchestrator. Talk to Mini Boss for coordination/triage, or handle it from Pri-Fly."
+"That's Mini Boss territory — I'm a pilot, not an orchestrator."
 Stay in your lane. Do your mission. Do it well.
 
 ## Token Efficiency (RTK active)
@@ -159,7 +166,25 @@ RTK proxies your CLI commands to reduce token consumption by 60-90%.
 - RTK is already hooked into your shell — no manual prefixing needed
 - Prefer targeted reads over broad exploration (read specific files, not directories)
 - Use subagents (Agent tool) for exploration that reads 3+ files — keep your main context clean
-- Run /compact after finishing investigation before starting implementation
+
+## Code Navigation
+If Serena MCP is available, prefer symbol-level navigation:
+- find_symbol / find_referencing_symbols for locating code
+- replace_symbol_body for surgical edits
+Fall back to grep/read if Serena is not connected.
+
+## Mission Phases
+Work in two phases. Compact between them.
+
+Phase 1: INVESTIGATE
+- Read the codebase, understand the problem, form a plan
+- When investigation is complete, run /compact to clear exploration debris
+- Your plan and conclusions survive compaction; raw file contents don't need to
+
+Phase 2: IMPLEMENT
+- Execute your plan from Phase 1
+- Write code, run tests, iterate
+- /compact again if context gets heavy before opening the PR
 
 ## Sibling Coordination (pull-parent protocol)
 If you see a file at .sortie/pull-parent.json, a sibling agent has merged their work
@@ -168,11 +193,20 @@ into the parent branch. Read the file for details, then:
 2. Resolve any merge conflicts
 3. Delete .sortie/pull-parent.json
 4. Continue your work with the updated code
+
+---
+## MISSION DIRECTIVE
+${DIRECTIVE}
 DIRECTIVE_EOF
 fi
 
 # Model
 echo "$MODEL" > "${SORTIE_DIR}/model.txt"
+
+# Token budget (optional)
+if [ -n "$BUDGET" ]; then
+  echo "$BUDGET" > "${SORTIE_DIR}/budget.txt"
+fi
 
 # Progress (create if missing)
 touch "${SORTIE_DIR}/progress.md"
