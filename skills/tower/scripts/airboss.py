@@ -605,11 +605,28 @@ class AirBoss:
             f"    bash '{Path(__file__).parent / 'xo-tools.sh'}' server-cmd\n"
             "  This is a one-time setup — once saved, V key works for all worktrees.\n\n"
             "STEP 0 — TOKEN HYGIENE:\n"
-            f"  Check if {ctx._project_dir}/.claudeignore exists. If not, inspect the project "
+            f"  a) Check if {ctx._project_dir}/.claudeignore exists. If not, inspect the project "
             "(look for package.json, Cargo.toml, pyproject.toml, go.mod, etc.) and generate "
             "an appropriate .claudeignore. This is critical — without it, agents will read "
             "lock files and node_modules, burning 50-100k tokens on noise. Tell the Air Boss "
-            "what you created.\n\n"
+            "what you created.\n"
+            f"  b) Check if {ctx._project_dir}/.mcp.json has a 'serena' entry with "
+            f"'--project', '{ctx._project_dir}' in its args. Serena MCP gives agents LSP-powered "
+            "symbol navigation (find_symbol, find_referencing_symbols) instead of grep+read, "
+            "saving 70-95% on code exploration tokens. If the project arg is missing or Serena "
+            "isn't configured at all, add or update the entry:\n"
+            '  ```json\n'
+            '  "serena": {\n'
+            '    "command": "uvx",\n'
+            '    "args": [\n'
+            '      "--from", "git+https://github.com/oraios/serena",\n'
+            '      "serena", "start-mcp-server",\n'
+            '      "--context", "ide-assistant",\n'
+            f'      "--project", "{ctx._project_dir}"\n'
+            '    ]\n'
+            '  }\n'
+            '  ```\n'
+            "  Tell the Air Boss if you added or updated Serena config.\n\n"
             "STEP 1 — SITUATION AWARENESS:\n"
             "  Check open worktrees — what's in progress, anything stale?\n\n"
             "STEP 2 — MISSION INTEL:\n"
