@@ -40,6 +40,9 @@ fi
 # Ensure dependencies (fast path: skip pip if already importable)
 python3 -c "import textual; import watchdog" 2>/dev/null || pip3 install -q textual watchdog 2>/dev/null || true
 
+# Preflight — patch existing worktrees with .claudeignore / .mcp.json
+bash "${SCRIPT_DIR}/preflight-worktrees.sh" "$PROJECT_DIR" 2>&1 | while IFS= read -r line; do echo "$line"; done
+
 # State dir for IPC
 STATE_DIR="/tmp/uss-tenkara/_prifly"
 mkdir -p "$STATE_DIR"
