@@ -46,6 +46,10 @@ class ItermBridge:
                 session_ended = Path(pilot.worktree_path) / ".sortie" / "session-ended"
                 if session_ended.exists():
                     session_ended.unlink()
+                # Write ON_DECK status so the board tracks this pilot
+                (Path(pilot.worktree_path) / ".sortie" / "flight-status.json").write_text(
+                    json.dumps({"status": "ON_DECK", "phase": "on deck — pre-launch checks", "timestamp": int(time_mod.time())})
+                )
                 # Build Top Gun splash for the iTerm pane
                 p_quote, p_attr = get_pilot_launch_quote()
                 p_quote = p_quote.replace("'", "'\\''")
