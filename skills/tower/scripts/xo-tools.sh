@@ -18,9 +18,6 @@
 #   clear-stale                               — Dismiss all RECOVERED agents
 #   queue-list                                — Show mission queue
 #   queue-remove <ticket-id>                  — Remove from queue
-#   server-cmd                                — Show current dev server command
-#   server-cmd set <command>                  — Set dev server command
-#   server-cmd detect                         — Re-run auto-detection
 
 set -euo pipefail
 
@@ -447,6 +444,80 @@ print(json.dumps(msg))
     echo "  For stream-json agents, use the chat pane instead (D key in TUI)."
 }
 
+# ── Token savings ────────────────────────────────────────────────────
+
+cmd_token_savings() {
+    local HEADROOM_PORT=8787
+    local RTK_OK=false
+    local HEADROOM_OK=false
+
+    echo "═══ USS TENKARA — TOKEN SAVINGS ═══"
+    echo ""
+
+    # ── RTK ──────────────────────────────────────────────────────────
+    echo "── RTK (CLI output compression) ──"
+    if command -v rtk &>/dev/null; then
+        RTK_OK=true
+        rtk gain 2>/dev/null || echo "  rtk gain: no data yet"
+    else
+        echo "  ✗ RTK not installed"
+    fi
+    echo ""
+
+    # ── Headroom ─────────────────────────────────────────────────────
+    echo "── HEADROOM (context compression) ──"
+    local HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
+    if [ -f "$HEADROOM_PID_FILE" ] && kill -0 "$(cat "$HEADROOM_PID_FILE")" 2>/dev/null; then
+        HEADROOM_OK=true
+        local stats
+        stats=$(curl -sf "http://localhost:${HEADROOM_PORT}/stats" 2>/dev/null)
+        if [ -n "$stats" ]; then
+            echo "$stats" | python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.stdin.read())
+except Exception:
+    print('  No traffic yet — no pilots have flown through Headroom.')
+    sys.exit(0)
+s = data.get('summary', {})
+savings = data.get('savings', {})
+cost_s = s.get('cost', {})
+comp = s.get('compression', {})
+total_tokens = savings.get('total_tokens', 0)
+saved_usd   = cost_s.get('total_saved_usd', 0)
+without_usd = cost_s.get('without_headroom_usd', 0)
+with_usd    = cost_s.get('with_headroom_usd', 0)
+savings_pct = cost_s.get('savings_pct', 0)
+reqs        = s.get('api_requests', 0)
+comp_reqs   = comp.get('requests_compressed', 0)
+avg_pct     = comp.get('avg_compression_pct', 0)
+by_layer    = savings.get('by_layer', {})
+comp_tok    = by_layer.get('compression', {}).get('tokens', 0)
+cli_tok     = by_layer.get('cli_filtering', {}).get('tokens', 0)
+print(f'  Tokens saved:     {total_tokens:>10,}')
+print(f'  Cost saved:       \${saved_usd:>9.4f}')
+print(f'  Cost with:        \${with_usd:>9.4f}  vs  without: \${without_usd:.4f}')
+print(f'  Overall savings:  {savings_pct:>9.1f}%')
+print(f'  Requests:         {comp_reqs:>10,} compressed / {reqs} total')
+print(f'  Avg compression:  {avg_pct:>9.1f}%')
+print(f'  By layer:  compression {comp_tok:,} tokens  |  CLI {cli_tok:,} tokens')
+" 2>/dev/null || echo "  No stats available"
+        else
+            echo "  ✗ Proxy unreachable on port ${HEADROOM_PORT}"
+        fi
+    else
+        echo "  ✗ Headroom not running (launch Tower to start it)"
+    fi
+    echo ""
+
+    # ── Summary ──────────────────────────────────────────────────────
+    if [ "$RTK_OK" = false ] && [ "$HEADROOM_OK" = false ]; then
+        echo "  ⚠ Neither RTK nor Headroom are active."
+        echo "    RTK:      brew install rtk-ai/tap/rtk && rtk init -g"
+        echo "    Headroom: pip install 'headroom-ai[all]' (starts with Tower)"
+    fi
+}
+
 # ── Health check ─────────────────────────────────────────────────────
 
 cmd_health() {
@@ -630,114 +701,6 @@ print(int(time.time()) - d.get('timestamp', 0))
     echo "  .sortie: ${sortie_size:-0B}"
 }
 
-# ── Server command management ─────────────────────────────────────────
-
-SORTIE_LIB_DIR="$(cd "$SCRIPT_DIR/../../sortie/lib" && pwd)"
-
-cmd_server_cmd() {
-    local subcmd="${1:-show}"
-    shift 2>/dev/null || true
-
-    local config_file="$SORTIE_DIR/server-cmd.json"
-
-    case "$subcmd" in
-        show|"")
-            echo "═══ DEV SERVER COMMAND ═══"
-            if [ -f "$config_file" ]; then
-                python3 -c "
-import json
-d = json.load(open('$config_file'))
-cmd = d.get('cmd', '(not set)')
-src = d.get('detected_from', 'unknown')
-pkg = d.get('pkg_mgr', '?')
-install = d.get('install_cmd', '(none)')
-detected = d.get('detected', False)
-origin = 'auto-detected' if detected else 'user-provided'
-print(f'  Command:    {cmd}')
-print(f'  Install:    {install}')
-print(f'  Pkg mgr:    {pkg}')
-print(f'  Source:     {src} ({origin})')
-print(f'  Config:     $config_file')
-" 2>/dev/null
-            else
-                echo "  Not configured."
-                echo "  Run: server-cmd detect   — to auto-detect"
-                echo "  Run: server-cmd set <cmd> — to set manually"
-            fi
-            ;;
-
-        set)
-            local cmd_str="$*"
-            if [ -z "$cmd_str" ]; then
-                echo "Usage: server-cmd set <command>"
-                echo "Examples:"
-                echo "  server-cmd set 'pnpm run dev'"
-                echo "  server-cmd set 'npm start'"
-                echo "  server-cmd set 'python manage.py runserver'"
-                echo "  server-cmd set 'go run ./cmd/server'"
-                echo "  server-cmd set 'docker compose up'"
-                return 1
-            fi
-            mkdir -p "$SORTIE_DIR"
-            python3 -c "
-import json
-config = {
-    'cmd': '''$cmd_str''',
-    'install_cmd': '',
-    'pkg_mgr': 'custom',
-    'detected_from': 'user-provided',
-    'detected': False
-}
-with open('$config_file', 'w') as f:
-    json.dump(config, f, indent=2)
-    f.write('\n')
-print('✓ Server command saved:')
-print(f'  {config[\"cmd\"]}')
-print(f'  Config: $config_file')
-print()
-print('V key will now use this command for all worktree dev servers.')
-" 2>/dev/null
-            ;;
-
-        detect)
-            echo "Running auto-detection against $PROJECT_DIR..."
-            mkdir -p "$SORTIE_DIR"
-            # Remove cached config so detection runs fresh
-            rm -f "$config_file"
-            python3 -c "
-import sys
-sys.path.insert(0, '$SORTIE_LIB_DIR')
-from detect_server import detect_server_cmd
-import json
-
-result = detect_server_cmd('$PROJECT_DIR')
-if result:
-    print('✓ Auto-detected:')
-    print(f'  Command:  {result[\"cmd\"]}')
-    print(f'  Install:  {result.get(\"install_cmd\", \"(none)\")}')
-    print(f'  Pkg mgr:  {result.get(\"pkg_mgr\", \"?\")}')
-    print(f'  Source:   {result.get(\"detected_from\", \"unknown\")}')
-    print(f'  Saved to: $config_file')
-else:
-    print('✗ Could not auto-detect server command.')
-    print('  No package.json scripts, manage.py, pyproject.toml, Gemfile,')
-    print('  go.mod, docker-compose.yml, or Makefile dev targets found.')
-    print()
-    print('  Set it manually:')
-    print(\"  bash xo-tools.sh server-cmd set 'your-command-here'\")
-" 2>/dev/null
-            ;;
-
-        *)
-            echo "Usage: server-cmd [show|set|detect]"
-            echo "  show               Show current dev server command"
-            echo "  set <command>      Set dev server command manually"
-            echo "  detect             Re-run auto-detection (clears cache)"
-            return 1
-            ;;
-    esac
-}
-
 # ── Dispatch ─────────────────────────────────────────────────────────
 
 cmd="${1:-help}"
@@ -756,8 +719,8 @@ case "$cmd" in
     tail-agent|tail)   cmd_tail_agent "$@" ;;
     reassign-model)    cmd_reassign_model "$@" ;;
     inject)            cmd_inject "$@" ;;
+    token-savings|savings|gain) cmd_token_savings ;;
     health)            cmd_health ;;
-    server-cmd)        cmd_server_cmd "$@" ;;
     help|--help|-h)
         echo "USS Tenkara — XO Tools"
         echo ""
@@ -772,12 +735,8 @@ case "$cmd" in
         echo "  board-json                              Board state as JSON (pipeable)"
         echo "  tail-agent <ticket>                     Tail agent's JSONL stream live"
         echo "  sentinel-status                         Sentinel health check"
-        echo "  health                                  Full system health report"
-        echo ""
-        echo "Dev Server:"
-        echo "  server-cmd                              Show current dev server command"
-        echo "  server-cmd set <command>                Set dev server command manually"
-        echo "  server-cmd detect                       Re-run auto-detection (clears cache)"
+        echo "  health                                  Full system health report
+  token-savings                           RTK + Headroom savings report"
         echo ""
         echo "Maintenance:"
         echo "  kick-sync                               Force dashboard re-sync"

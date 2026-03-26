@@ -1,4 +1,12 @@
 {
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "echo 'DEBRIEF REQUIRED: Before you finish, write your session debrief. Run: python3 <TOWER_SCRIPTS>/storage-db.py write-debrief <PROJECT_DIR> <json>  — JSON keys: ticket_id, branch, model, what_done, whats_left, decisions, gotchas, files_touched, pr_url, pr_status, branch_status. Keep each field to 1-2 sentences. This is mandatory — the next pilot on this ticket depends on it.'"
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "bash <SORTIE_SCRIPTS>/sortie-statusline.sh"

@@ -116,6 +116,14 @@ echo "WORKTREE:${WORKTREE_PATH}"
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
 
+# ── Init storage DB + fetch briefing ─────────────────────────────────
+STORAGE_DB="${SCRIPT_DIR}/storage-db.py"
+python3 "$STORAGE_DB" init "$PROJECT_DIR" 2>/dev/null || true
+BRIEFING=$(python3 "$STORAGE_DB" get-briefing "$PROJECT_DIR" "$TICKET_ID" 2>/dev/null || true)
+if [ "$BRIEFING" = "BRIEFING:none" ]; then
+  BRIEFING=""
+fi
+
 # Directive
 if [ -n "$DIRECTIVE" ]; then
   cat > "${SORTIE_DIR}/directive.md" << DIRECTIVE_EOF
@@ -127,6 +135,7 @@ YOUR JOB:
 - Execute the directive above — implement, fix, test, PR
 - Write code, run tests, commit changes, open PRs
 - Read and understand the codebase in your worktree
+- Before implementing any new function, use find_symbol to check if it already exists. Do not duplicate existing implementations.
 - Track progress in .sortie/progress.md
 
 NOT YOUR JOB (redirect to Mini Boss or Air Boss):
@@ -147,6 +156,28 @@ into the parent branch. Read the file for details, then:
 2. Resolve any merge conflicts
 3. Delete .sortie/pull-parent.json
 4. Continue your work with the updated code
+
+## Session Debrief (MANDATORY before stopping)
+Before your session ends, write a debrief to the project database:
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' '<json>'
+\`\`\`
+The JSON must include: ticket_id, branch, model, what_done, whats_left,
+decisions, gotchas, files_touched, pr_url, pr_status, branch_status.
+Keep each field to 1-2 concise sentences. This debrief is read by the next
+pilot deployed on this ticket — write for them, not for yourself.
+
+## Logging Insights
+If you discover something that other pilots on this project should know
+(a gotcha, an architecture pattern, a convention, a landmine), log it:
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' write-insight '${PROJECT_DIR}' '${TICKET_ID}' '<category>' '<detail>'
+\`\`\`
+Categories: gotcha, architecture, pattern, convention
+Only log things that aren't obvious from the code itself.
+${BRIEFING:+
+---
+${BRIEFING}}
 DIRECTIVE_EOF
 fi
 
@@ -185,7 +216,7 @@ fi
 
 # ── Write settings (branch-scoped push permission) ───────────────────
 if [ -x "${SORTIE_SCRIPTS}/write-settings.sh" ]; then
-  bash "${SORTIE_SCRIPTS}/write-settings.sh" "$BRANCH_NAME" 2>/dev/null || true
+  bash "${SORTIE_SCRIPTS}/write-settings.sh" "$BRANCH_NAME" "$WORKTREE_PATH" "$PROJECT_DIR" 2>/dev/null || true
 fi
 
 # ── Build disallowed tools list ──────────────────────────────────────
@@ -198,7 +229,7 @@ else
 fi
 
 # ── Build kickoff ────────────────────────────────────────────────────
-KICKOFF="Read ${SORTIE_DIR}/directive.md and follow all instructions. Track progress in ${SORTIE_DIR}/progress.md"
+KICKOFF="Read ${SORTIE_DIR}/directive.md and follow all instructions. Track progress in ${SORTIE_DIR}/progress.md. Check for prior intel: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'"
 
 # ── Write launch script ─────────────────────────────────────────────
 LAUNCH_SCRIPT="${SORTIE_DIR}/launch.sh"
@@ -213,6 +244,12 @@ cleanup_flight() {
   touch .sortie/session-ended
 }
 trap cleanup_flight EXIT
+
+# Route through Headroom proxy if running (context compression)
+HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
+if [ -f "\$HEADROOM_PID_FILE" ] && kill -0 "\$(cat "\$HEADROOM_PID_FILE")" 2>/dev/null; then
+  export ANTHROPIC_BASE_URL="http://localhost:8787"
+fi
 
 claude --model ${MODEL} '${KICKOFF}' --disallowedTools ${DISALLOWED}
 LAUNCH_EOF2

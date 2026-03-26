@@ -82,7 +82,7 @@ with open('${WT_PATH}/.mcp.json', 'w') as f: json.dump(cfg, f, indent=2)
     # Extract branch name from git worktree
     WT_BRANCH=$(git -C "$WT_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     if [ -n "$WT_BRANCH" ]; then
-      bash "${SORTIE_SCRIPTS}/write-settings.sh" "$WT_BRANCH" "$WT_PATH" 2>/dev/null || true
+      bash "${SORTIE_SCRIPTS}/write-settings.sh" "$WT_BRANCH" "$WT_PATH" "$PROJECT_DIR" 2>/dev/null || true
       CHANGED=true
     fi
   fi
