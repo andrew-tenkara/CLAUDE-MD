@@ -57,6 +57,20 @@ case "$MODEL" in
   *) echo "ERROR: Invalid model '$MODEL'. Must be sonnet, opus, or haiku." >&2; exit 1 ;;
 esac
 
+# ── RTK gate — required for token efficiency ─────────────────────────
+if ! command -v rtk &>/dev/null; then
+  echo "ERROR: RTK (Rust Token Killer) is not installed." >&2
+  echo "  Agents require RTK for 60-90% token savings on CLI output." >&2
+  echo "  Install: brew install rtk-ai/tap/rtk && rtk init -g" >&2
+  exit 1
+fi
+
+if [ ! -f "${HOME}/.claude/hooks/rtk-rewrite.sh" ]; then
+  echo "ERROR: RTK hook not installed — agent commands won't be proxied." >&2
+  echo "  Fix: rtk init -g" >&2
+  exit 1
+fi
+
 # ── Resolve project dir ──────────────────────────────────────────────
 if [ -z "$PROJECT_DIR" ]; then
   PROJECT_DIR="${SORTIE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
@@ -139,6 +153,13 @@ NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 If asked to do something outside your role, say:
 "That's Mini Boss territory — I'm a pilot, not an orchestrator. Talk to Mini Boss for coordination/triage, or handle it from Pri-Fly."
 Stay in your lane. Do your mission. Do it well.
+
+## Token Efficiency (RTK active)
+RTK proxies your CLI commands to reduce token consumption by 60-90%.
+- RTK is already hooked into your shell — no manual prefixing needed
+- Prefer targeted reads over broad exploration (read specific files, not directories)
+- Use subagents (Agent tool) for exploration that reads 3+ files — keep your main context clean
+- Run /compact after finishing investigation before starting implementation
 
 ## Sibling Coordination (pull-parent protocol)
 If you see a file at .sortie/pull-parent.json, a sibling agent has merged their work
