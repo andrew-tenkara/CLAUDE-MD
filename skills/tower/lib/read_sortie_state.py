@@ -242,6 +242,8 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
 _SKIP_DIRS = {
     "node_modules", ".git", ".venv", "venv", "__pycache__",
     "target", "dist", "build", ".next", ".nuxt", ".turbo",
+    # dot-dirs that are never worktrees (but NOT .claude — sub-worktrees live there)
+    ".github", ".husky", ".idea", ".vscode", ".DS_Store",
 }
 
 
@@ -263,7 +265,10 @@ def _find_child_worktrees(
     for child in children:
         if child.is_symlink() or not child.is_dir():
             continue
-        if child.name in _SKIP_DIRS or child.name.startswith("."):
+        if child.name in _SKIP_DIRS:
+            continue
+        # Skip dot-dirs EXCEPT .claude (sub-worktrees live at .claude/worktrees/)
+        if child.name.startswith(".") and child.name != ".claude":
             continue
         # Skip the root worktree itself (already processed by caller)
         if child == root:
