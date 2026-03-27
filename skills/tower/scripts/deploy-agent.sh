@@ -279,8 +279,10 @@ cat >> "${LAUNCH_SCRIPT}" << LAUNCH_EOF2
 cd '${WORKTREE_PATH}'
 
 # Cleanup on exit — signal session ended so dashboard sets RECOVERED
+# Also runs auto-debrief in case pane was killed without a graceful /exit
 cleanup_flight() {
   touch .sortie/session-ended
+  python3 '${SCRIPT_DIR}/hooks/stop-auto-debrief.py' '${PROJECT_DIR}' <<< '{}' 2>/dev/null || true
 }
 trap cleanup_flight EXIT
 
