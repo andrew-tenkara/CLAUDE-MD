@@ -54,11 +54,12 @@ print("  │         HEADROOM TOKEN SAVINGS           │")
 print("  └─────────────────────────────────────────┘")
 print()
 print(f"  Total tokens saved:   {total_tokens_saved:>12,}")
-if saved_usd or with_usd:
+if savings_pct:
+    print(f"  Overall savings:      {savings_pct:>11.1f}%")
+if saved_usd or without_usd:
     print(f"  Cost saved:           ${saved_usd:>11.4f}")
     print(f"  Cost with headroom:   ${with_usd:>11.4f}")
     print(f"  Cost without:         ${without_usd:>11.4f}")
-    print(f"  Overall savings:      {savings_pct:>11.1f}%")
 print()
 print(f"  ── By layer ──────────────────────────────")
 print(f"  CLI filtering (RTK):  {cli_tokens:>12,} tokens  ({cli_avg_pct:.1f}% avg, {cli_cmds:,} cmds)")
