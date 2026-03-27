@@ -131,3 +131,155 @@ Hit D in Tower to deploy any of them.
 ## No-args Mode
 
 `/tq` with no arguments: pull all unstarted Linear tickets (Backlog + Todo, assigned to current user), present a quick summary list, and prep worktrees for all of them. Each appears on the TUI board as IDLE.
+
+---
+
+## Split Mode — Coordinator + Sub-Agents
+
+`--split` deploys a coordinator (parent worktree) plus N sub-agents that communicate via SQLite. Sub-agents all share the parent's remote branch so they push/pull to sync without needing separate PRs.
+
+### Syntax
+
+```
+/tq ENG-256 --split 3             # auto-name: ENG-256-A, ENG-256-B, ENG-256-C
+/tq ENG-256 --split ENG-257,ENG-258,ENG-259  # existing tickets as sub-agents
+/tq ENG-256 --split 3 --model opus          # coordinator model; subs use sonnet
+```
+
+Parse `--split` **before** input detection and strip it from the remainder. Auto-naming generates uppercase letters (A, B, C…) up to the requested count.
+
+**Model defaults in split mode:**
+- Coordinator: `opus` (orchestration is heavier reasoning)
+- Sub-agents: `sonnet`
+- `--model` overrides coordinator; sub-agents always use sonnet unless the user specifies `--sub-model` (unsupported, just use sonnet)
+
+### Deployment sequence
+
+**Compute paths before any deploy calls:**
+
+```
+TOWER_SCRIPTS=~/.claude/skills/tower/scripts
+STORAGE_DB="${TOWER_SCRIPTS}/storage-db.py"
+PARENT_WORKTREE="${PROJECT_DIR}/.claude/worktrees/${PARENT_ID}"
+PARENT_BRANCH="sortie/${PARENT_ID}"  # or gitBranchName from Linear
+```
+
+**Step 1: Deploy coordinator** with `--no-launch` and the coordinator directive below.
+
+**Step 2: Parse `WORKTREE:<path>` from deploy output** to confirm the parent path.
+
+**Step 3: Deploy each sub-agent** with:
+```bash
+bash "$DEPLOY" <sub-id> \
+  --no-launch \
+  --model sonnet \
+  --branch "sortie/${SUB_ID}" \
+  --directive "<sub-agent directive>" \
+  --project-dir "$PARENT_WORKTREE"   # ← key: sub lives inside parent
+```
+Sub-agents deployed with `--project-dir <PARENT_WORKTREE>` get their `.sortie/` inside the parent worktree and share the same `storage.db` message bus.
+
+---
+
+### Coordinator Directive Template
+
+Construct this string (substitute all `<...>` tokens) and pass as `--directive`:
+
+```
+## Role: COORDINATOR
+
+YOUR JOB:
+- Break the mission into subtasks and assign them to your sub-agents via SQLite signals
+- Monitor progress (poll get-messages periodically)
+- Merge sub-agent work when they signal done, resolve conflicts
+- Write the final PR once the mission is complete
+
+NOT YOUR JOB:
+- Writing implementation code yourself (unless genuinely unblocked + faster)
+
+## Sub-Agents Under Your Command
+<for each sub: "- <SUB_ID>: <sub-ticket title if known, otherwise 'awaiting task assignment'>">
+
+## SQLite Signal Bus
+Message DB: <PARENT_WORKTREE>/.sortie/storage.db (shared with all sub-agents)
+
+Assign a task to a sub-agent:
+python3 '<STORAGE_DB>' send-message '<PARENT_WORKTREE>' - << 'SIGNAL'
+{"from_agent": "<PARENT_ID>", "to_agent": "<SUB_ID>", "type": "task", "payload": "Implement X: <specifics including files, acceptance criteria>"}
+SIGNAL
+
+Read replies (done/blocked/info signals from sub-agents):
+python3 '<STORAGE_DB>' get-messages '<PARENT_WORKTREE>' '<PARENT_ID>'
+
+Broadcast to all sub-agents (e.g. schema change, new constraint):
+python3 '<STORAGE_DB>' send-message '<PARENT_WORKTREE>' - << 'SIGNAL'
+{"from_agent": "<PARENT_ID>", "to_agent": null, "type": "info", "payload": "<broadcast message>"}
+SIGNAL
+
+## Shared Branch Sync
+All sub-agents push to and pull from the same remote branch: <PARENT_BRANCH>
+To pull their latest commits before merging:
+  git pull origin <PARENT_BRANCH> --rebase
+
+## Mission Directive
+<full parent ticket content — title, description, acceptance criteria, comments>
+```
+
+---
+
+### Sub-Agent Directive Template
+
+Construct this string per sub-agent and pass as `--directive`:
+
+```
+## Parent Coordination
+Your coordinator is: <PARENT_ID>
+Message DB (shared): <PARENT_WORKTREE>/.sortie/storage.db
+
+**On startup — read your task assignment:**
+python3 '<STORAGE_DB>' get-messages '<PARENT_WORKTREE>' '<SUB_ID>'
+(If no messages yet, wait a few minutes and re-check — coordinator assigns tasks after launch.)
+
+**Signal done** (after committing + pushing):
+python3 '<STORAGE_DB>' send-message '<PARENT_WORKTREE>' - << 'SIGNAL'
+{"from_agent": "<SUB_ID>", "to_agent": "<PARENT_ID>", "type": "done", "payload": "Branch: <PARENT_BRANCH>, Commits: <short list>, Summary: <2 sentences>"}
+SIGNAL
+
+**Signal blocked** (need help or clarification):
+python3 '<STORAGE_DB>' send-message '<PARENT_WORKTREE>' - << 'SIGNAL'
+{"from_agent": "<SUB_ID>", "to_agent": "<PARENT_ID>", "type": "blocked", "payload": "<what is blocking you and what you need>"}
+SIGNAL
+
+**Poll for coordinator replies** (after signaling blocked, or check periodically):
+python3 '<STORAGE_DB>' get-messages '<PARENT_WORKTREE>' '<SUB_ID>'
+
+## Shared Branch
+You and your sibling sub-agents all share one remote branch: <PARENT_BRANCH>
+
+Pull latest from siblings before starting new work:
+  git pull origin <PARENT_BRANCH> --rebase
+
+Push your commits to the shared branch:
+  git push origin HEAD:<PARENT_BRANCH>
+
+Your local branch is <SUB_BRANCH> — push with the explicit refspec above.
+
+## Mission Directive
+<sub-ticket content if pre-existing Linear ticket; otherwise:>
+Await task assignment from coordinator <PARENT_ID>. Run the get-messages command above to receive your task. Do not proceed until you have a task assignment.
+```
+
+---
+
+### Confirm (split mode)
+
+```
+ENG-256 (coordinator) + 3 sub-agents on deck:
+  ENG-256     — Add payment integration [coordinator] (opus)
+  ENG-256-A  — Sub-agent A (sonnet)
+  ENG-256-B  — Sub-agent B (sonnet)
+  ENG-256-C  — Sub-agent C (sonnet)
+Shared branch: sortie/ENG-256
+Message bus: .claude/worktrees/ENG-256/.sortie/storage.db
+Deploy coordinator first (D), then sub-agents.
+```
