@@ -293,7 +293,7 @@ class PriFlyCommander(App):
         Binding("k", "compact_selected", "Compact", priority=True, show=False),
         Binding("v", "start_server", "DevServer", priority=True, show=False),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
-        Binding("h", "headroom_monitor", "Headroom", priority=True, show=False),
+        Binding("h", "headroom_monitor", "Headroom", priority=True, show=True),
         Binding("t", "open_terminal", "Terminal", priority=True, show=False),
         Binding("z", "dismiss_selected", "Dismiss", priority=True, show=False),
         Binding("s", "sync_worktrees", "Sync", priority=True, show=False),
@@ -1578,6 +1578,7 @@ class PriFlyCommander(App):
             _key("M", "Boss", "bold magenta")
             _key("S", "Sync")
             _sep()
+            _key("H", "Headroom", "bold cyan")
             _key("F", "Flight")
             _sep()
             _key("Q", "Quit")

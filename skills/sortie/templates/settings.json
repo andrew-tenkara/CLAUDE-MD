@@ -50,6 +50,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 '<TOWER_SCRIPTS>/hooks/user-prompt-snapshot.py' '<PROJECT_DIR>'"
+          }
+        ]
+      }
     ]
   },
   "statusLine": {
