@@ -158,12 +158,25 @@ into the parent branch. Read the file for details, then:
 4. Continue your work with the updated code
 
 ## Session Debrief (MANDATORY before stopping)
-Before your session ends, write a debrief to the project database:
+Before your session ends, write a debrief to the project database.
+Use a heredoc to avoid shell quoting issues with JSON:
 \`\`\`bash
-python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' '<json>'
+python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' - << 'DEBRIEF'
+{
+  "ticket_id": "<ticket>",
+  "branch": "<branch>",
+  "model": "<model>",
+  "what_done": "<1-2 sentences>",
+  "whats_left": "<1-2 sentences or empty>",
+  "decisions": "<key decisions made>",
+  "gotchas": "<landmines for the next pilot>",
+  "files_touched": "<key files>",
+  "pr_url": "<url or empty>",
+  "pr_status": "<open|merged|draft|empty>",
+  "branch_status": "<clean|needs-rebase|empty>"
+}
+DEBRIEF
 \`\`\`
-The JSON must include: ticket_id, branch, model, what_done, whats_left,
-decisions, gotchas, files_touched, pr_url, pr_status, branch_status.
 Keep each field to 1-2 concise sentences. This debrief is read by the next
 pilot deployed on this ticket — write for them, not for yourself.
 

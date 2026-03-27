@@ -293,6 +293,7 @@ class PriFlyCommander(App):
         Binding("k", "compact_selected", "Compact", priority=True, show=False),
         Binding("v", "start_server", "DevServer", priority=True, show=False),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
+        Binding("h", "headroom_monitor", "Headroom", priority=True, show=False),
         Binding("t", "open_terminal", "Terminal", priority=True, show=False),
         Binding("z", "dismiss_selected", "Dismiss", priority=True, show=False),
         Binding("s", "sync_worktrees", "Sync", priority=True, show=False),
@@ -887,6 +888,11 @@ class PriFlyCommander(App):
             label = f"Terminal opened at {self._project_dir}"
         self._iterm_pane_cmd("TERMINAL", f"cd '{target}'")
         self._add_radio("PRI-FLY", label, "system")
+
+    def action_headroom_monitor(self) -> None:
+        monitor = Path(__file__).resolve().parent / "headroom-monitor.py"
+        self._iterm_pane_cmd("HEADROOM", f"python3 '{monitor}'")
+        self._add_radio("PRI-FLY", "Headroom monitor opened", "system")
 
     def action_relaunch_miniboss(self) -> None:
         if self._airboss_spawned and getattr(self, "_airboss_active", False):

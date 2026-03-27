@@ -70,7 +70,8 @@ class AirBoss:
         worktree_info = self.get_worktree_summary()
         deploy_script = Path(__file__).resolve().parent / "deploy-agent.sh"
 
-        kickoff = self._build_kickoff_prompt(sitrep, worktree_info, deploy_script)
+        db_health = self._db_health()
+        kickoff = self._build_kickoff_prompt(sitrep, worktree_info, deploy_script, db_health)
 
         state_dir = Path("/tmp/uss-tenkara/_prifly")
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -228,7 +229,28 @@ class AirBoss:
         """No-op — Mini Boss is now an interactive Claude session, not stream-json."""
         pass
 
-    def _build_kickoff_prompt(self, sitrep: str, worktree_info: str, deploy_script: Path) -> str:
+    def _db_health(self) -> str:
+        """Run storage-db health-check and return a formatted string for the kickoff prompt."""
+        import json as _json
+        storage_db = Path(__file__).resolve().parent / "storage-db.py"
+        try:
+            result = subprocess.run(
+                ["python3", str(storage_db), "health-check", self.ctx._project_dir],
+                capture_output=True, text=True, timeout=10,
+            )
+            h = _json.loads(result.stdout)
+            lines = [f"DB: {h['db_size_mb']}MB | " + " | ".join(
+                f"{t}: {v['rows']}" for t, v in h["tables"].items()
+            )]
+            if h["warnings"]:
+                lines.append("⚠ DB WARNINGS:")
+                for w in h["warnings"]:
+                    lines.append(f"  - {w}")
+            return "\n".join(lines)
+        except Exception:
+            return "DB health check unavailable"
+
+    def _build_kickoff_prompt(self, sitrep: str, worktree_info: str, deploy_script: Path, db_health: str = "") -> str:
         """Build the kickoff prompt for Mini Boss."""
         ctx = self.ctx
         return (
@@ -463,6 +485,14 @@ class AirBoss:
             "Do NOT check for Tower or report it as down. You exist inside the TUI. "
             f"If you ever need to verify system health, run: bash '{Path(__file__).parent / 'xo-tools.sh'}' health\n"
             "Never rely on stale state files in /tmp/uss-tenkara/ to determine if Tower is up.\n\n"
+            "## Storage DB Health\n"
+            f"{db_health}\n\n"
+            "## DB Management Tools (run these in Bash)\n"
+            f"- Health check:  python3 '{Path(__file__).parent / 'storage-db.py'}' health-check '{ctx._project_dir}'\n"
+            f"- Prune old events/messages: python3 '{Path(__file__).parent / 'storage-db.py'}' prune '{ctx._project_dir}' --events-days 30 --vacuum\n"
+            f"- Compress a ticket: bash '{Path(__file__).parent / 'compress-ticket.sh'}' '{ctx._project_dir}' <TICKET-ID>\n"
+            f"- List summaries: python3 '{Path(__file__).parent / 'storage-db.py'}' get-summaries '{ctx._project_dir}'\n"
+            f"- Project rollup: bash '{Path(__file__).parent / 'rollup-summaries.sh'}' '{ctx._project_dir}'\n\n"
             f"STEP 0 — PREFLIGHT:\n"
             f"Run: bash '{Path(__file__).parent / 'preflight-check.sh'}' '{ctx._project_dir}'\n\n"
             "If preflight finds issues (✗), you are the setup wizard. Handle each one interactively:\n\n"
