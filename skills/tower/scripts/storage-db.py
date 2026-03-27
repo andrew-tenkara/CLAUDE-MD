@@ -23,6 +23,20 @@ Usage:
       JSON via stdin. Keys: content, summary_type, level, debrief_count, source_ids, model
   storage-db.py get-summaries <project-dir> [--ticket <ticket-id>] [--level N]
   storage-db.py get-summaries-for-rollup <project-dir>
+
+CCR (Compress-Cache-Retrieve) commands:
+  storage-db.py cache-tool-result <project-dir> <session-id> <ticket-id> <tool-name> <tool-key> -
+      stdin=full result text. Upserts into tool_cache (24h TTL).
+  storage-db.py get-cached-tool <project-dir> <session-id> <tool-name> <tool-key>
+      Returns full cached result, or CACHE:MISS if not found.
+  storage-db.py check-tool-cache <project-dir> <session-id> <tool-name> <tool-key>
+      Prints HIT or MISS only (fast path for dedup hooks).
+  storage-db.py write-snapshot <project-dir> <session-id> <ticket-id> <remaining-pct> -
+      stdin=snapshot text. Stores pre-compaction context snapshot.
+  storage-db.py get-latest-snapshot <project-dir> <session-id>
+      Returns latest snapshot text for this session, or SNAPSHOT:none.
+  storage-db.py prune-tool-cache <project-dir>
+      Deletes expired tool_cache entries (expires_at < now).
 """
 
 import json
@@ -172,6 +186,35 @@ def cmd_init(project_dir: str) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_summaries_ticket ON summaries(ticket_id);
         CREATE INDEX IF NOT EXISTS idx_summaries_level ON summaries(level, created_at DESC);
+
+        -- CCR: full tool results cached before headroom compresses them
+        CREATE TABLE IF NOT EXISTS tool_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            ticket_id TEXT,
+            tool_name TEXT NOT NULL,
+            tool_key TEXT NOT NULL,       -- file path / first 200 chars of command
+            full_result TEXT NOT NULL,
+            original_bytes INTEGER,
+            accessed_at INTEGER,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            expires_at INTEGER NOT NULL   -- created_at + 86400 (24h TTL)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_cache_key
+            ON tool_cache(session_id, tool_name, tool_key);
+        CREATE INDEX IF NOT EXISTS idx_tool_cache_expiry ON tool_cache(expires_at);
+
+        -- CCR: pre-compaction context snapshots (SessionStart restores these)
+        CREATE TABLE IF NOT EXISTS context_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            ticket_id TEXT,
+            remaining_pct REAL,
+            snapshot TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_session
+            ON context_snapshots(session_id, created_at DESC);
     """)
 
     # Backfill FTS5 for any existing rows that predate this schema
@@ -428,12 +471,25 @@ def cmd_get_briefing(project_dir: str, ticket_id: str) -> None:
         )
         conn.commit()
 
-    if not debriefs and not summary_row and not insights and not sessions and not messages:
+    # ── 5b. Recent compaction snapshot (any session on this ticket, last 2h) ──
+    recent_snapshot = conn.execute(
+        """SELECT snapshot FROM context_snapshots
+           WHERE ticket_id = ? AND created_at > ?
+           ORDER BY created_at DESC LIMIT 1""",
+        (ticket_id, now - 7200),
+    ).fetchone()
+
+    if not debriefs and not summary_row and not insights and not sessions and not messages and not recent_snapshot:
         print("BRIEFING:none")
         conn.close()
         return
 
     lines = ["## Prior Intelligence\n"]
+
+    if recent_snapshot:
+        lines.append("## Last Session Snapshot (pre-compaction)\n")
+        lines.append(recent_snapshot["snapshot"])
+        lines.append("")
 
     if summary_row:
         lines.append(f"### Summary (compressed from {summary_row['debrief_count']} sessions)\n")
@@ -515,20 +571,23 @@ def cmd_get_insights(project_dir: str, limit: int = 20) -> None:
 
 def cmd_health_check(project_dir: str) -> None:
     """Print JSON health report for the DB."""
-    import time as _time
     db_path = Path(project_dir) / ".sortie" / "storage.db"
+    wal_path = Path(str(db_path) + "-wal")
     size_bytes = db_path.stat().st_size if db_path.exists() else 0
+    wal_bytes = wal_path.stat().st_size if wal_path.exists() else 0
     conn = get_db(project_dir)
 
     stats: dict = {
         "db_size_mb": round(size_bytes / 1024 / 1024, 2),
+        "wal_size_mb": round(wal_bytes / 1024 / 1024, 2),
         "db_path": str(db_path),
         "tables": {},
         "warnings": [],
         "ok": True,
     }
 
-    for table in ["debriefs", "insights", "sessions", "events", "messages", "summaries"]:
+    for table in ["debriefs", "insights", "sessions", "events", "messages",
+                  "summaries", "tool_cache", "context_snapshots"]:
         try:
             n = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             stats["tables"][table] = {"rows": n}
@@ -538,15 +597,22 @@ def cmd_health_check(project_dir: str) -> None:
     # Age of oldest debrief
     oldest = conn.execute("SELECT MIN(timestamp) FROM debriefs").fetchone()[0]
     if oldest:
-        stats["tables"]["debriefs"]["oldest_days"] = round((_time.time() - oldest) / 86400, 1)
+        stats["tables"]["debriefs"]["oldest_days"] = round((time.time() - oldest) / 86400, 1)
 
     # Unconsumed events
     unc = conn.execute("SELECT COUNT(*) FROM events WHERE consumed_at IS NULL").fetchone()[0]
     stats["tables"]["events"]["unconsumed"] = unc
 
+    # tool_cache: expired count
+    now = int(time.time())
+    expired = conn.execute("SELECT COUNT(*) FROM tool_cache WHERE expires_at < ?", (now,)).fetchone()[0]
+    stats["tables"]["tool_cache"]["expired"] = expired
+
     # Warnings
     if size_bytes > 50 * 1024 * 1024:
         stats["warnings"].append(f"DB is {stats['db_size_mb']}MB — run: storage-db.py prune <project_dir> --vacuum")
+    if wal_bytes > 10 * 1024 * 1024:
+        stats["warnings"].append(f"WAL is {stats['wal_size_mb']}MB — run: storage-db.py prune <project_dir> (triggers PASSIVE checkpoint)")
     if stats["tables"]["events"]["rows"] > 10_000:
         stats["warnings"].append(f"events table has {stats['tables']['events']['rows']} rows — run prune")
     if stats["tables"]["messages"]["rows"] > 2_000:
@@ -559,6 +625,8 @@ def cmd_health_check(project_dir: str) -> None:
             stats["warnings"].append(f"{uncompressed} tickets have uncompressed debriefs — run compress-ticket.sh per ticket or rollup-summaries.sh")
     if stats["tables"]["summaries"]["rows"] > 50:
         stats["warnings"].append(f"{stats['tables']['summaries']['rows']} summaries — consider running rollup-summaries.sh to condense")
+    if expired > 100:
+        stats["warnings"].append(f"{expired} expired tool_cache entries — run: storage-db.py prune-tool-cache <project_dir>")
 
     stats["ok"] = len(stats["warnings"]) == 0
     print(json.dumps(stats, indent=2))
@@ -566,17 +634,23 @@ def cmd_health_check(project_dir: str) -> None:
 
 def cmd_prune(project_dir: str, events_days: int = 30, messages_days: int = 7, vacuum: bool = False) -> None:
     """Prune ephemeral tables. Never touches debriefs, insights, or summaries."""
-    import time as _time
     conn = get_db(project_dir)
-    now = int(_time.time())
+    now = int(time.time())
     ev_cut = now - events_days * 86400
     msg_cut = now - messages_days * 86400
 
     r1 = conn.execute("DELETE FROM events WHERE created_at < ?", (ev_cut,))
     r2 = conn.execute("DELETE FROM messages WHERE created_at < ? AND read_at IS NOT NULL", (msg_cut,))
-    conn.commit()
+    r3 = conn.execute("DELETE FROM tool_cache WHERE expires_at < ?", (now,))
+    conn.commit()  # Must commit before WAL checkpoint
+    wal = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
 
-    result = {"events_deleted": r1.rowcount, "messages_deleted": r2.rowcount}
+    result = {
+        "events_deleted": r1.rowcount,
+        "messages_deleted": r2.rowcount,
+        "tool_cache_deleted": r3.rowcount,
+        "wal_checkpoint": {"busy": wal[0], "log": wal[1], "checkpointed": wal[2]},
+    }
     if vacuum:
         conn.execute("VACUUM")
         result["vacuumed"] = True
@@ -673,6 +747,101 @@ def cmd_get_summaries_for_rollup(project_dir: str) -> None:
     print(json.dumps({"summary_ids": ids, "count": len(rows), "text": "\n".join(lines)}))
 
 
+# ── CCR commands ─────────────────────────────────────────────────────────────
+
+def cmd_cache_tool_result(project_dir: str, session_id: str, ticket_id: str,
+                          tool_name: str, tool_key: str) -> None:
+    """Cache a full tool result from stdin. Upserts (INSERT OR REPLACE) with 24h TTL."""
+    full_result = sys.stdin.read()
+    now = int(time.time())
+    conn = get_db(project_dir)
+    conn.execute(
+        """INSERT OR REPLACE INTO tool_cache
+           (session_id, ticket_id, tool_name, tool_key, full_result, original_bytes, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (session_id, ticket_id or None, tool_name, tool_key,
+         full_result, len(full_result.encode()), now, now + 86400),
+    )
+    conn.commit()
+    conn.close()
+    print(f"CACHE:stored {tool_name}:{tool_key[:60]}")
+
+
+def cmd_get_cached_tool(project_dir: str, session_id: str,
+                        tool_name: str, tool_key: str) -> None:
+    """Return full cached result for a tool call, or CACHE:MISS."""
+    now = int(time.time())
+    conn = get_db(project_dir)
+    row = conn.execute(
+        """SELECT id, full_result FROM tool_cache
+           WHERE session_id = ? AND tool_name = ? AND tool_key = ? AND expires_at > ?""",
+        (session_id, tool_name, tool_key, now),
+    ).fetchone()
+    if not row:
+        print("CACHE:MISS")
+        conn.close()
+        return
+    conn.execute("UPDATE tool_cache SET accessed_at = ? WHERE id = ?", (now, row["id"]))
+    conn.commit()
+    conn.close()
+    print(row["full_result"], end="")
+
+
+def cmd_check_tool_cache(project_dir: str, session_id: str,
+                         tool_name: str, tool_key: str) -> None:
+    """Print HIT or MISS only — fast path for dedup hooks."""
+    now = int(time.time())
+    conn = get_db(project_dir)
+    row = conn.execute(
+        """SELECT 1 FROM tool_cache
+           WHERE session_id = ? AND tool_name = ? AND tool_key = ? AND expires_at > ?""",
+        (session_id, tool_name, tool_key, now),
+    ).fetchone()
+    conn.close()
+    print("HIT" if row else "MISS")
+
+
+def cmd_write_snapshot(project_dir: str, session_id: str, ticket_id: str,
+                       remaining_pct: str) -> None:
+    """Write a pre-compaction context snapshot from stdin."""
+    snapshot = sys.stdin.read()
+    conn = get_db(project_dir)
+    conn.execute(
+        """INSERT INTO context_snapshots (session_id, ticket_id, remaining_pct, snapshot)
+           VALUES (?, ?, ?, ?)""",
+        (session_id, ticket_id or None, float(remaining_pct) if remaining_pct else None, snapshot),
+    )
+    conn.commit()
+    conn.close()
+    print(f"SNAPSHOT:written for session {session_id[:16]}")
+
+
+def cmd_get_latest_snapshot(project_dir: str, session_id: str) -> None:
+    """Return latest snapshot text for this session, or SNAPSHOT:none."""
+    conn = get_db(project_dir)
+    row = conn.execute(
+        """SELECT snapshot FROM context_snapshots
+           WHERE session_id = ?
+           ORDER BY created_at DESC, id DESC LIMIT 1""",
+        (session_id,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        print("SNAPSHOT:none")
+        return
+    print(row["snapshot"], end="")
+
+
+def cmd_prune_tool_cache(project_dir: str) -> None:
+    """Delete expired tool_cache entries."""
+    now = int(time.time())
+    conn = get_db(project_dir)
+    r = conn.execute("DELETE FROM tool_cache WHERE expires_at < ?", (now,))
+    conn.commit()
+    conn.close()
+    print(json.dumps({"tool_cache_deleted": r.rowcount}))
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -763,6 +932,26 @@ if __name__ == "__main__":
 
     elif cmd == "get-summaries-for-rollup":
         cmd_get_summaries_for_rollup(sys.argv[2])
+
+    elif cmd == "cache-tool-result":
+        # cache-tool-result <project_dir> <session_id> <ticket_id> <tool_name> <tool_key> -
+        cmd_cache_tool_result(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
+
+    elif cmd == "get-cached-tool":
+        cmd_get_cached_tool(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+
+    elif cmd == "check-tool-cache":
+        cmd_check_tool_cache(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+
+    elif cmd == "write-snapshot":
+        # write-snapshot <project_dir> <session_id> <ticket_id> <remaining_pct> -
+        cmd_write_snapshot(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+
+    elif cmd == "get-latest-snapshot":
+        cmd_get_latest_snapshot(sys.argv[2], sys.argv[3])
+
+    elif cmd == "prune-tool-cache":
+        cmd_prune_tool_cache(sys.argv[2])
 
     else:
         print(f"Unknown command: {cmd}")
