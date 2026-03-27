@@ -239,6 +239,56 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
     )
 
 
+_SKIP_DIRS = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__",
+    "target", "dist", "build", ".next", ".nuxt", ".turbo",
+}
+
+
+def _find_child_worktrees(
+    root: Path,
+    current: Path,
+    parent_ticket: Optional[str],
+    agents: list,
+    max_depth: int,
+    _depth: int = 0,
+) -> None:
+    """Recursively find child worktrees (any dir with .sortie/directive.md)."""
+    if _depth >= max_depth:
+        return
+    try:
+        children = sorted(current.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if child.is_symlink() or not child.is_dir():
+            continue
+        if child.name in _SKIP_DIRS or child.name.startswith("."):
+            continue
+        # Skip the root worktree itself (already processed by caller)
+        if child == root:
+            continue
+        sortie_dir = child / ".sortie"
+        if sortie_dir.is_dir() and (sortie_dir / "directive.md").exists():
+            sub_label = child.name
+            sub_agent = _read_agent(
+                sortie_dir, child,
+                is_sub_agent=True,
+                parent_ticket=parent_ticket,
+                sub_name=sub_label,
+            )
+            if sub_agent:
+                agents.append(sub_agent)
+            # Recurse into the child worktree too (grandchildren)
+            _find_child_worktrees(
+                root, child, sub_agent.ticket_id if sub_agent else parent_ticket,
+                agents, max_depth, _depth + 1,
+            )
+        else:
+            # No .sortie here — keep descending
+            _find_child_worktrees(root, child, parent_ticket, agents, max_depth, _depth + 1)
+
+
 def read_sortie_state(target_ticket: Optional[str] = None,
                       project_dir: Optional[str] = None) -> DashboardState:
     """Read state for all active sortie agents.
@@ -270,24 +320,10 @@ def read_sortie_state(target_ticket: Optional[str] = None,
         if agent:
             agents.append(agent)
 
-        # Check sub-agents
-        try:
-            sub_entries = sorted(entry.iterdir())
-        except OSError:
-            continue
-        for sub in sub_entries:
-            if not sub.name.startswith("sub-") or sub.is_symlink() or not sub.is_dir():
-                continue
-            sub_sortie = sub / ".sortie"
-            sub_label = sub.name[4:]  # strip "sub-" prefix
-            sub_agent = _read_agent(
-                sub_sortie, sub,
-                is_sub_agent=True,
-                parent_ticket=agent.ticket_id if agent else None,
-                sub_name=sub_label,
-            )
-            if sub_agent:
-                agents.append(sub_agent)
+        # Recursively find child worktrees at any depth
+        _find_child_worktrees(
+            entry, entry, agent.ticket_id if agent else None, agents, max_depth=4
+        )
 
     return DashboardState(
         agents=agents,
