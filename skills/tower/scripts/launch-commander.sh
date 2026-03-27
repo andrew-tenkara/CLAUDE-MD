@@ -58,8 +58,8 @@ rm -f "$HEADROOM_PID_FILE"
 
 if command -v headroom &>/dev/null; then
   headroom proxy --port "$HEADROOM_PORT" > "$HEADROOM_LOG" 2>&1 &
-  # Wait for proxy to be ready (ML model preload takes ~6s)
-  for i in $(seq 1 10); do
+  # Wait for proxy to be ready (Kompress ML model preload takes 10-15s)
+  for i in $(seq 1 20); do
     if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
       break
     fi
