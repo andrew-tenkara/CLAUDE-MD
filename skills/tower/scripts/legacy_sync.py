@@ -125,6 +125,7 @@ class LegacySync:
                     model=agent.model if agent.model not in ("unknown", "Unknown", "") else "sonnet",
                     mission_title=title,
                     directive=f"(legacy worktree agent)\nBranch: {agent.branch}",
+                    parent_ticket_id=agent.parent_ticket if agent.is_sub_agent else None,
                 )
                 # Only announce if worktree has fresh evidence (not stale from prior sessions)
                 if not agent.session_ended and agent.jsonl_metrics and agent.jsonl_metrics.total_tokens > 0:
