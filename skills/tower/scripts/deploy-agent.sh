@@ -227,7 +227,7 @@ echo "$MODEL" > "${SORTIE_DIR}/model.txt"
 touch "${SORTIE_DIR}/progress.md"
 
 # Set PREFLIGHT status — agent is on deck, not yet airborne
-echo "{\"status\": \"PREFLIGHT\", \"phase\": \"on deck — pre-launch checks\", \"timestamp\": $(date +%s)}" > "${SORTIE_DIR}/flight-status.json"
+python3 -c "import json,time; open('${SORTIE_DIR}/flight-status.json','w').write(json.dumps({'status':'PREFLIGHT','phase':'on deck - pre-launch checks','timestamp':int(time.time())}))"
 
 # ── Env setup ─────────────────────────────────────────────────────────
 cd "$WORKTREE_PATH"
