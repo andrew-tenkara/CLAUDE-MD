@@ -735,8 +735,8 @@ case "$cmd" in
         echo "  board-json                              Board state as JSON (pipeable)"
         echo "  tail-agent <ticket>                     Tail agent's JSONL stream live"
         echo "  sentinel-status                         Sentinel health check"
-        echo "  health                                  Full system health report
-  token-savings                           RTK + Headroom savings report"
+        echo "  health                                  Full system health report"
+        echo "  token-savings                           RTK + Headroom savings report"
         echo ""
         echo "Maintenance:"
         echo "  kick-sync                               Force dashboard re-sync"

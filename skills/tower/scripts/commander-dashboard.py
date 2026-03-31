@@ -287,9 +287,7 @@ class PriFlyCommander(App):
         Binding("b", "open_bullboard", "BullBoard", priority=True, show=False),
         Binding("o", "open_browser", "Browser", priority=True, show=False),
         Binding("p", "open_pr", "PR", priority=True, show=False),
-        Binding("r", "resume_selected", "Resume", priority=True, show=False),
         Binding("w", "waveoff_selected", "Wave-off", priority=True, show=False),
-        Binding("x", "recall_selected", "Recall", priority=True, show=False),
         Binding("k", "compact_selected", "Compact", priority=True, show=False),
         Binding("v", "start_server", "DevServer", priority=True, show=False),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
@@ -833,36 +831,12 @@ class PriFlyCommander(App):
                 self._dispatcher.cmd_deploy([ticket, "--model", model])
         self.push_screen(DeployInputScreen(), callback=_on_dismiss)
 
-    def action_resume_selected(self) -> None:
-        """Open a bare Claude session in the worktree — reads progress, asks what's next."""
-        pilot = self._get_selected_pilot()
-        if not pilot:
-            self._add_radio("PRI-FLY", "No pilot selected", "error")
-            return
-        if not pilot.worktree_path:
-            self._add_radio("PRI-FLY", f"{pilot.callsign} has no worktree", "error")
-            return
-        if pilot.callsign in self._iterm_panes:
-            self._add_radio("PRI-FLY", f"{pilot.callsign} already has an active pane", "error")
-            return
-        self._iterm_bridge.resume_agent_pane(pilot)
-
     def action_waveoff_selected(self) -> None:
         pilot = self._get_selected_pilot()
         if not pilot:
             self._add_radio("PRI-FLY", "No pilot selected", "error")
             return
         self._dispatcher.cmd_wave_off([pilot.callsign])
-
-    def action_recall_selected(self) -> None:
-        pilot = self._get_selected_pilot()
-        if not pilot:
-            self._add_radio("PRI-FLY", "No pilot selected", "error")
-            return
-        if pilot.status != "IN_FLIGHT":
-            self._add_radio("PRI-FLY", f"{pilot.callsign} is {pilot.status} — not in flight", "error")
-            return
-        self._dispatcher.cmd_recall([pilot.callsign])
 
     def action_compact_selected(self) -> None:
         pilot = self._get_selected_pilot()
@@ -1601,10 +1575,6 @@ class PriFlyCommander(App):
                     _key("P", "PR")
                 _sep()
                 # Flight ops group
-                if status in ("RECOVERED", "ON_DECK"):
-                    _key("R", "Resume", "bold green")
-                if status == "IN_FLIGHT":
-                    _key("X", "Recall", "bold yellow")
                 if status not in ("RECOVERED",):
                     _key("W", "Wave-off", "bold red")
                 _key("Z", "Dismiss")

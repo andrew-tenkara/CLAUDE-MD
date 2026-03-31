@@ -5,6 +5,8 @@ All access self.app for roster/agent data (standard Textual pattern).
 """
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 import time as time_mod
 from datetime import datetime
@@ -408,7 +410,7 @@ class ChatPane(Vertical):
 # ── Mission Queue Panel ──────────────────────────────────────────────
 
 class _QueueTable(DataTable):
-    """DataTable subclass with deploy/remove via on_key override."""
+    """DataTable subclass with deploy/remove/linear via on_key override."""
 
     def _on_key(self, event) -> None:
         if event.key == "enter":
@@ -420,6 +422,11 @@ class _QueueTable(DataTable):
             event.prevent_default()
             event.stop()
             self.action_remove_mission()
+            return
+        if event.key == "l":
+            event.prevent_default()
+            event.stop()
+            self.action_open_linear()
             return
 
     def action_deploy_mission(self) -> None:
@@ -456,6 +463,33 @@ class _QueueTable(DataTable):
                     break
         except Exception as e:
             self.app._add_radio("PRI-FLY", f"Remove failed: {e}", "error")
+
+    def action_open_linear(self) -> None:
+        """Open the selected mission's Linear ticket in the browser."""
+        try:
+            app = self.app
+            queued = app._mission_queue.queued()
+            if self.row_count == 0 or self.cursor_row >= len(queued):
+                return
+            mission = queued[self.cursor_row]
+            ticket_id = mission.id
+            if not ticket_id:
+                app._add_radio("PRI-FLY", "No ticket ID on selected mission", "error")
+                return
+            org = ""
+            try:
+                config_path = Path(__file__).resolve().parent.parent / "config.json"
+                org = json.loads(config_path.read_text()).get("linear_org", "")
+            except Exception:
+                pass
+            if not org:
+                app._add_radio("PRI-FLY", "No linear_org configured", "error")
+                return
+            url = f"https://linear.app/{org}/issue/{ticket_id}"
+            subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            app._add_radio("PRI-FLY", f"Opening {ticket_id} in Linear", "system")
+        except Exception as e:
+            self.app._add_radio("PRI-FLY", f"Open Linear failed: {e}", "error")
 
 
 class MissionQueuePanel(Vertical):

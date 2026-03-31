@@ -156,46 +156,57 @@ into the parent branch. Read the file for details, then:
 3. Delete .sortie/pull-parent.json
 4. Continue your work with the updated code
 
-## Session Debrief (MANDATORY before stopping)
-Before your session ends, write a debrief to the project database.
-Use a heredoc to avoid shell quoting issues with JSON:
-\`\`\`bash
-python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' - << 'DEBRIEF'
-{
-  "ticket_id": "<ticket>",
-  "branch": "<branch>",
-  "model": "<model>",
-  "what_done": "<1-2 sentences>",
-  "whats_left": "<1-2 sentences or empty>",
-  "decisions": "<key decisions made>",
-  "gotchas": "<landmines for the next pilot>",
-  "files_touched": "<key files>",
-  "pr_url": "<url or empty>",
-  "pr_status": "<open|merged|draft|empty>",
-  "branch_status": "<clean|needs-rebase|empty>"
-}
-DEBRIEF
-\`\`\`
-Keep each field to 1-2 concise sentences. This debrief is read by the next
-pilot deployed on this ticket — write for them, not for yourself.
+## Project Intelligence DB
+All pilots share a SQLite database at: ${PROJECT_DIR}/.sortie/storage.db
+Use it to read prior intel, log discoveries, communicate with coordinators, and leave debriefs.
 
-## Logging Insights
-If you discover something that other pilots on this project should know
-(a gotcha, an architecture pattern, a convention, a landmine), log it:
-\`\`\`bash
-python3 '${SCRIPT_DIR}/storage-db.py' write-insight '${PROJECT_DIR}' '${TICKET_ID}' '<category>' '<detail>'
-\`\`\`
-Categories: gotcha, architecture, pattern, convention
-Only log things that aren't obvious from the code itself.
+### Read prior intel on this ticket (run on startup)
 
-## CCR: Full Tool Result Retrieval
-Tool results > 2KB are cached in full in .sortie/storage.db before context compression.
-If a dedup hook blocks a re-read, retrieve the full result with:
-\`\`\`bash
-python3 '${SCRIPT_DIR}/storage-db.py' get-cached-tool '${PROJECT_DIR}' "\$CLAUDE_SESSION_ID" <tool_name> <tool_key>
-\`\`\`
+    python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'
+
+### Check for messages (from coordinator or siblings)
+
+    python3 '${SCRIPT_DIR}/storage-db.py' get-messages '${PROJECT_DIR}' '${TICKET_ID}'
+
+### Send a message (signal coordinator, ask for help, broadcast a discovery)
+
+    python3 '${SCRIPT_DIR}/storage-db.py' send-message '${PROJECT_DIR}' - << 'MSG'
+    {"from_agent": "${TICKET_ID}", "to_agent": "<ticket-id or null for broadcast>", "type": "<done|blocked|progress|info>", "payload": "<message>"}
+    MSG
+
+Types: done (work complete), blocked (need help), progress (status update), info (broadcast finding)
+
+### Log a discovery other pilots should know
+
+    python3 '${SCRIPT_DIR}/storage-db.py' write-insight '${PROJECT_DIR}' '${TICKET_ID}' '<category>' '<detail>'
+
+Categories: gotcha, architecture, pattern, convention — only log things not obvious from the code.
+
+### Retrieve a cached tool result (after compaction or dedup hook blocks re-read)
+
+    python3 '${SCRIPT_DIR}/storage-db.py' get-cached-tool '${PROJECT_DIR}' "$CLAUDE_SESSION_ID" <tool_name> <tool_key>
+
 tool_key: file path for Read, first 200 chars of command for Bash, "pattern:path" for Grep.
-Only re-run the original tool if you need fresh/updated data.
+Tool results >2KB are cached automatically. Retrieve instead of re-running when possible.
+
+### Session debrief (MANDATORY before stopping)
+Write for the next pilot — what you did, what's left, decisions made, landmines.
+
+    python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' - << 'DEBRIEF'
+    {
+      "ticket_id": "${TICKET_ID}",
+      "branch": "<branch>",
+      "model": "<model>",
+      "what_done": "<1-2 sentences>",
+      "whats_left": "<1-2 sentences or empty>",
+      "decisions": "<key decisions made>",
+      "gotchas": "<landmines for the next pilot>",
+      "files_touched": "<key files>",
+      "pr_url": "<url or empty>",
+      "pr_status": "<open|merged|draft|empty>",
+      "branch_status": "<clean|needs-rebase|empty>"
+    }
+    DEBRIEF
 
 ---
 ## Mission Directive
@@ -225,6 +236,11 @@ echo "$MODEL" > "${SORTIE_DIR}/model.txt"
 
 # Progress (create if missing)
 touch "${SORTIE_DIR}/progress.md"
+
+# Stub context.json so fuel gauge never crashes on missing file
+if [ ! -f "${SORTIE_DIR}/context.json" ]; then
+  python3 -c "import json; open('${SORTIE_DIR}/context.json','w').write(json.dumps({'used_percentage':None,'context_window_size':None,'stale':True,'timestamp':0}))"
+fi
 
 # Set PREFLIGHT status — agent is on deck, not yet airborne
 python3 -c "import json,time; open('${SORTIE_DIR}/flight-status.json','w').write(json.dumps({'status':'PREFLIGHT','phase':'on deck - pre-launch checks','timestamp':int(time.time())}))"
@@ -316,7 +332,7 @@ if [ -f "$AGENTS_WINDOW_FILE" ] && [ -f "$AGENTS_SESSION_FILE" ]; then
 
   NEW_SESSION_ID=$(osascript << APPLESCRIPT_EOF
 tell application "iTerm2"
-  set targetWindow to (windows whose id is ${PB_WINDOW_ID})'s item 1
+  set targetWindow to item 1 of (windows whose id is ${PB_WINDOW_ID})
   set targetSession to missing value
   repeat with s in sessions of current tab of targetWindow
     if unique id of s is "${PB_SESSION_ID}" then

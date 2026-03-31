@@ -101,19 +101,13 @@ check_cli "Claude CLI" "claude" "npm install -g @anthropic-ai/claude-code"
 check_cli "Git" "git" "xcode-select --install"
 check_cli "GitHub CLI" "gh" "brew install gh"
 
-# RTK is required for agent deployments (60-90% token savings)
+# RTK is optional
 if command -v rtk &>/dev/null; then
     echo "  $PASS RTK ($(rtk --version 2>/dev/null || echo 'installed')) — token optimizer"
-    if [ -f "$HOME/.claude/hooks/rtk-rewrite.sh" ]; then
-        echo "  $PASS RTK hook installed"
-    else
-        echo "  $FAIL RTK hook missing — run: rtk init -g"
-        issues=$((issues + 1))
-    fi
 else
-    echo "  $FAIL RTK — required for agent deployments"
-    echo "    Fix: brew install rtk-ai/tap/rtk && rtk init -g"
-    issues=$((issues + 1))
+    echo "  $WARN RTK — not installed (optional, saves 60-90% tokens)"
+    echo "    Install: brew install rtk && rtk init -g"
+    warnings=$((warnings + 1))
 fi
 
 echo ""

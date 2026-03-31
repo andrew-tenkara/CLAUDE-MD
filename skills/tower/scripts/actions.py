@@ -121,6 +121,7 @@ class Actions:
         def _delete_worktree():
             try:
                 wt_path = Path(worktree_path)
+
                 if not wt_path.exists():
                     try:
                         ctx.call_from_thread(ctx._add_radio, "PRI-FLY", f"{callsign} worktree already gone", "system")
