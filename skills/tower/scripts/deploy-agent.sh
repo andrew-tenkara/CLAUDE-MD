@@ -27,6 +27,7 @@ MODEL="sonnet"
 DIRECTIVE=""
 PROJECT_DIR=""
 BRANCH_OVERRIDE=""
+BASE_BRANCH="dev"
 NO_LAUNCH=false
 
 while [[ $# -gt 0 ]]; do
@@ -35,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --directive)   DIRECTIVE="$2"; shift 2 ;;
     --project-dir) PROJECT_DIR="$2"; shift 2 ;;
     --branch)      BRANCH_OVERRIDE="$2"; shift 2 ;;
+    --base)        BASE_BRANCH="$2"; shift 2 ;;
     --no-launch)   NO_LAUNCH=true; shift ;;
     -*)            echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
     *)
@@ -51,11 +53,27 @@ if [ -z "$TICKET_ID" ]; then
   exit 1
 fi
 
-# Validate model
+# ── Model registry ───────────────────────────────────────────────────
+# Map short names to pinned checkpoints. Set to "latest" to let Claude
+# Code resolve to its current default for that tier.
+# Swap these when a new checkpoint drops — one place, all pilots.
+MODEL_SONNET="claude-sonnet-4-20250514"
+MODEL_OPUS="latest"
+MODEL_HAIKU="latest"
+
+# Validate & resolve
 case "$MODEL" in
-  sonnet|opus|haiku) ;;
-  *) echo "ERROR: Invalid model '$MODEL'. Must be sonnet, opus, or haiku." >&2; exit 1 ;;
+  sonnet) RESOLVED_MODEL="$MODEL_SONNET" ;;
+  opus)   RESOLVED_MODEL="$MODEL_OPUS"   ;;
+  haiku)  RESOLVED_MODEL="$MODEL_HAIKU"  ;;
+  *)      echo "ERROR: Invalid model '$MODEL'. Must be sonnet, opus, or haiku." >&2; exit 1 ;;
 esac
+
+# "latest" means use the short name — let Claude Code pick the checkpoint
+if [ "$RESOLVED_MODEL" = "latest" ]; then
+  RESOLVED_MODEL="$MODEL"
+fi
+echo "MODEL_RESOLVED:${MODEL} → ${RESOLVED_MODEL}"
 
 # ── Resolve project dir ──────────────────────────────────────────────
 if [ -z "$PROJECT_DIR" ]; then
@@ -73,7 +91,7 @@ WORKTREE_PATH=""
 CREATE_EXIT=0
 
 if [ -x "${SORTIE_SCRIPTS}/create-worktree.sh" ]; then
-  OUTPUT=$(bash "${SORTIE_SCRIPTS}/create-worktree.sh" "$TICKET_ID" "$BRANCH_NAME" dev --model "$MODEL" --resume 2>&1) || CREATE_EXIT=$?
+  OUTPUT=$(bash "${SORTIE_SCRIPTS}/create-worktree.sh" "$TICKET_ID" "$BRANCH_NAME" "$BASE_BRANCH" --model "$MODEL" --resume 2>&1) || CREATE_EXIT=$?
 
   # Parse output safely (handles spaces in paths)
   while IFS= read -r line; do
@@ -94,8 +112,14 @@ fi
 if [ -z "$WORKTREE_PATH" ]; then
   # Fallback — create worktree manually
   WORKTREE_PATH="${PROJECT_DIR}/.claude/worktrees/${TICKET_ID}"
+  if [ -d "$WORKTREE_PATH" ] && [ ! -f "$WORKTREE_PATH/.git" ]; then
+    # Ghost directory (no .git link) — clean up before creating
+    echo "GHOST_CLEANUP: removing $WORKTREE_PATH (not a valid git worktree)" >&2
+    rm -rf "$WORKTREE_PATH"
+    git -C "$PROJECT_DIR" worktree prune 2>/dev/null || true
+  fi
   if [ ! -d "$WORKTREE_PATH" ]; then
-    if ! git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" dev 2>/dev/null; then
+    if ! git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" -b "$BRANCH_NAME" "$BASE_BRANCH" 2>/dev/null; then
       if ! git -C "$PROJECT_DIR" worktree add "$WORKTREE_PATH" "$BRANCH_NAME" 2>/dev/null; then
         echo "ERROR: Failed to create git worktree at $WORKTREE_PATH" >&2
         exit 1
@@ -184,10 +208,29 @@ Categories: gotcha, architecture, pattern, convention — only log things not ob
 
 ### Retrieve a cached tool result (after compaction or dedup hook blocks re-read)
 
-    python3 '${SCRIPT_DIR}/storage-db.py' get-cached-tool '${PROJECT_DIR}' "$CLAUDE_SESSION_ID" <tool_name> <tool_key>
+    python3 '${SCRIPT_DIR}/storage-db.py' get-cached-tool '${PROJECT_DIR}' "\$CLAUDE_SESSION_ID" <tool_name> <tool_key>
 
 tool_key: file path for Read, first 200 chars of command for Bash, "pattern:path" for Grep.
 Tool results >2KB are cached automatically. Retrieve instead of re-running when possible.
+
+### Context snapshots (write after each phase transition)
+After completing a major phase (research → implementation → testing → PR), write a snapshot.
+This survives compaction — hooks restore it automatically so you don't lose context.
+
+    python3 '${SCRIPT_DIR}/storage-db.py' write-snapshot '${PROJECT_DIR}' - << 'SNAP'
+    {
+      "ticket_id": "${TICKET_ID}",
+      "phase": "<research|implementation|testing|pr>",
+      "key_findings": "<what you learned or built>",
+      "current_plan": "<what you're doing next>",
+      "remaining_steps": "<what's left>",
+      "files_touched": "<key files modified so far>",
+      "blockers": "<any blockers or empty>"
+    }
+    SNAP
+
+Write snapshots at natural breakpoints — don't wait until the end. If context gets compacted,
+the hooks will inject your last snapshot so you can pick up where you left off.
 
 ### Session debrief (MANDATORY before stopping)
 Write for the next pilot — what you did, what's left, decisions made, landmines.
@@ -231,8 +274,8 @@ CLAUDE_MD_EOF
   echo "CLAUDE_MD:written"
 fi
 
-# Model
-echo "$MODEL" > "${SORTIE_DIR}/model.txt"
+# Model — short name on line 1, resolved checkpoint on line 2
+echo -e "${MODEL}\n${RESOLVED_MODEL}" > "${SORTIE_DIR}/model.txt"
 
 # Progress (create if missing)
 touch "${SORTIE_DIR}/progress.md"
@@ -302,13 +345,7 @@ cleanup_flight() {
 }
 trap cleanup_flight EXIT
 
-# Route through Headroom proxy if running (context compression)
-# Health check instead of PID: headroom forks a child, so $! captures a dead parent PID
-if curl -sf "http://localhost:8787/health" >/dev/null 2>&1; then
-  export ANTHROPIC_BASE_URL="http://localhost:8787"
-fi
-
-claude --model ${MODEL} '${KICKOFF}' --disallowedTools ${DISALLOWED}
+claude --model ${RESOLVED_MODEL} '${KICKOFF}' --disallowedTools ${DISALLOWED}
 LAUNCH_EOF2
 chmod +x "${LAUNCH_SCRIPT}"
 
