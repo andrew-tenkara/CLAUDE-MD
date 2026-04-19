@@ -82,16 +82,36 @@ Add `--apply` to write recommendations to CLAUDE.md and MEMORY.md. Uses LiteLLM 
 
 ### 1. `rtk init -g` overwrites your PATH fix
 
-`rtk init -g` regenerates `~/.claude/hooks/rtk-rewrite.sh` from scratch, blowing away any manual PATH edits. The recommended fix is a **wrapper script** that survives overwrites:
+`rtk init -g` regenerates `~/.claude/hooks/rtk-rewrite.sh` from scratch, blowing away any manual PATH edits. RTK also integrity-checks this file with SHA-256 and refuses to run if it's been modified. The recommended fix is a **wrapper script** that survives overwrites and strips the `permissionDecision` field (see gotcha #6):
 
 Create `~/.claude/hooks/rtk-wrapper.sh`:
 ```bash
 #!/usr/bin/env bash
+# NOT managed by rtk — survives rtk init -g regenerations.
+# Fixes: PATH for Homebrew/cargo, permissionDecision strip, provenance xattr bypass.
+
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
-exec bash "$(dirname "$0")/rtk-rewrite.sh" "$@"
+
+OUTPUT=$(bash "$(dirname "$0")/rtk-rewrite.sh" "$@")
+EXIT_CODE=$?
+
+if [ -z "$OUTPUT" ] || [ $EXIT_CODE -ne 0 ]; then
+  exit $EXIT_CODE
+fi
+
+# Strip permissionDecision — see gotcha #6
+echo "$OUTPUT" | jq '
+  if .hookSpecificOutput then
+    .hookSpecificOutput |= del(.permissionDecision, .permissionDecisionReason)
+  else
+    .
+  end
+' 2>/dev/null || echo "$OUTPUT"
+
+exit $EXIT_CODE
 ```
 
-Then point the hook in `~/.claude/settings.json` at `rtk-wrapper.sh` instead of `rtk-rewrite.sh`. RTK owns its script, you own the wrapper. Neither steps on the other.
+Point the hook in `~/.claude/settings.json` at `bash ~/.claude/hooks/rtk-wrapper.sh` (note the `bash` prefix — see gotcha #6). RTK owns its script, you own the wrapper. Neither steps on the other.
 
 ### 2. RTK hook silently fails without PATH fix (GitHub #685)
 
@@ -106,14 +126,60 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
 
 The preflight script checks for this. If the PATH line is missing, it flags it.
 
-### 2. Hook changes require a new session
+### 3. Hook changes require a new session
 
 Claude Code loads hooks at session start. If you fix the PATH issue or add a new hook, existing sessions (including running pilot agents) won't pick it up. Only new sessions get the fix. Don't restart running agents just for this — they'll get it on their next deploy.
 
-### 3. Headroom falls back silently
+### 4. Headroom falls back silently
 
 If Headroom fails to start (port conflict, crash, missing dependency), the SessionStart hook exits 0 and Claude Code connects directly to Anthropic. No error. Sessions work fine — you just don't get compression. Check `curl -sf http://localhost:8787/health` to verify it's actually running.
 
-### 4. RTK name collision
+### 5. RTK name collision
 
 Two different packages are named "rtk": **Rust Token Killer** (rtk-ai/rtk, this tool) and **Rust Type Kit** (reachingforthejack/rtk). If `rtk gain` returns "command not found" but `rtk --version` works, you have the wrong package. Uninstall and reinstall from `rtk-ai/tap/rtk`.
+
+### 6. `permissionDecision: "allow"` silently kills savings
+
+RTK's hook emits `"permissionDecision": "allow"` alongside `updatedInput` in its JSON output. This has two consequences:
+
+1. **Security bypass** ([rtk-ai/rtk#260](https://github.com/rtk-ai/rtk/issues/260), [#1155](https://github.com/rtk-ai/rtk/issues/1155)): every rewritten command auto-approves without hitting Claude Code's permission system.
+2. **Silent savings loss** ([rtk-ai/rtk#893](https://github.com/rtk-ai/rtk/issues/893)): when `skipDangerousModePermissionPrompt` or `skipAutoPermissionPrompt` is true in settings.json, Claude Code can skip the permission handling path entirely. When it does, `updatedInput` bundled with `permissionDecision` gets discarded. The original uncompressed command runs instead. No errors. Full token output hits the context window.
+
+**Symptoms:** RTK gain shows high savings, but individual sessions intermittently show uncompressed output for commands RTK should be filtering. More likely if you use `--dangerously-skip-permissions` or have `skipAutoPermissionPrompt: true`.
+
+**Fix:** The wrapper script in gotcha #1 strips `permissionDecision` and `permissionDecisionReason` from the hook output using jq, leaving only `updatedInput` and `hookEventName`. Claude Code processes the rewrite through its normal flow without the auto-allow bypass.
+
+RTK's own integrity check prevents editing `rtk-rewrite.sh` directly — the fix must live in the wrapper.
+
+### 7. macOS Sequoia `com.apple.provenance` causes intermittent hook failures
+
+macOS Sequoia (and some Ventura builds) tags files with a `com.apple.provenance` extended attribute. When Claude Code invokes the hook via `/bin/sh`, this attribute can intermittently cause "Permission denied" errors — even when Unix permissions are 755.
+
+**Symptoms:** Sporadic errors in Claude Code output that look like this:
+
+```
+⎿  PreToolUse:Bash hook error
+⎿  Failed with non-blocking status code: /bin/sh: /Users/you/.claude/hooks/rtk-wrapper.sh: Permission denied
+```
+
+Non-blocking (exit code != 2), so the command runs uncompressed. The attribute cannot be removed with `xattr -d` — Sequoia reapplies it at the directory level.
+
+**Note:** If you're seeing these errors, you're likely also being hit by gotcha #6 (`permissionDecision` auto-allow) at the same time. The provenance errors are visible — they show up in Claude's output. But the `permissionDecision` leak is silent — commands run uncompressed with no error. Both cause lost savings independently. The provenance errors are the canary: if you're seeing them, check whether the `permissionDecision` strip is also missing from your wrapper.
+
+**Fix:** Prefix the hook command in `settings.json` with `bash` so the shell reads the file as data instead of exec'ing it:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "bash /Users/you/.claude/hooks/rtk-wrapper.sh"
+      }]
+    }]
+  }
+}
+```
+
+This bypasses the exec permission check entirely. Apply the same `bash` prefix to any other hooks (e.g., `headroom-autostart.sh`).
