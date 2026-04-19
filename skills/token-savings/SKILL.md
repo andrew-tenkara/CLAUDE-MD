@@ -7,6 +7,13 @@ description: Setup wizard and dashboard for RTK (command output filtering) and H
 
 Two-tool token savings system: RTK filters command output (60-90% savings), Headroom compresses API context (prefix caching + ML compression). Together they reduce token consumption by roughly 50%.
 
+## Install
+
+```bash
+git clone https://github.com/andrew-tenkara/CLAUDE-MD.git
+cp -r CLAUDE-MD/skills/token-savings ~/.claude/skills/token-savings
+```
+
 ## Flow
 
 1. Run `bash "$SKILL_DIR/scripts/preflight.sh"` and capture the output.
