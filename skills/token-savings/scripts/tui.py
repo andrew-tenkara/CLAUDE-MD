@@ -157,11 +157,11 @@ def build_rtk_panel(stats):
     t.add_column("k", style="dim", width=16)
     t.add_column("v")
     t.add_row("Status", f"[green]ACTIVE[/green] ({stats['version']})")
-    t.add_row("Tokens saved", f"[cyan]{fmt(stats['tokens_saved'])}[/cyan] ({stats['savings_pct']:.1f}%)")
+    t.add_row("Tokens saved", f"[cyan]{fmt(stats['tokens_saved'])}[/cyan]")
     t.add_row("Commands", f"{stats['total_commands']:,}")
     pct = stats["savings_pct"] / 100
     bar = "█" * int(pct * 25) + "░" * (25 - int(pct * 25))
-    t.add_row("Efficiency", f"[green]{bar}[/green] {stats['savings_pct']:.1f}%")
+    t.add_row("CLI reduction", f"[green]{bar}[/green] {stats['savings_pct']:.1f}% of Bash output filtered")
     if stats["top"]:
         t.add_row("", "")
         t.add_row("[bold]Top Commands[/bold]", "")
@@ -291,7 +291,16 @@ def build_recent_panel(stats):
             Text(transforms, style="dim"),
         )
 
-    return Panel(t, title=f"[bold]Recent Requests ({len(log_recent)})[/bold]", border_style="cyan")
+    footer = Text()
+    footer.append(f"  {len(log_recent)} entries", style="dim")
+    footer.append("  |  noop rows with after > before = proxy metadata overhead (~0.3%)", style="dim")
+
+    content = Table(box=None, padding=0, expand=True)
+    content.add_column(ratio=1)
+    content.add_row(t)
+    content.add_row(footer)
+
+    return Panel(content, title=f"[bold]Recent Requests[/bold]", border_style="cyan")
 
 
 def build_layout(rtk, hr):
