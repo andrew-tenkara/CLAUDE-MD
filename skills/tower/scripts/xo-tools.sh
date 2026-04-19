@@ -466,8 +466,8 @@ cmd_token_savings() {
 
     # ── Headroom ─────────────────────────────────────────────────────
     echo "── HEADROOM (context compression) ──"
-    local HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
-    if [ -f "$HEADROOM_PID_FILE" ] && kill -0 "$(cat "$HEADROOM_PID_FILE")" 2>/dev/null; then
+    # Headroom is globally managed by SessionStart hook — check via health endpoint, not PID file
+    if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
         HEADROOM_OK=true
         local stats
         stats=$(curl -sf "http://localhost:${HEADROOM_PORT}/stats" 2>/dev/null)
@@ -506,7 +506,7 @@ print(f'  By layer:  compression {comp_tok:,} tokens  |  CLI {cli_tok:,} tokens'
             echo "  ✗ Proxy unreachable on port ${HEADROOM_PORT}"
         fi
     else
-        echo "  ✗ Headroom not running (launch Tower to start it)"
+        echo "  ✗ Headroom not running (starts automatically on next Claude session)"
     fi
     echo ""
 
@@ -514,7 +514,7 @@ print(f'  By layer:  compression {comp_tok:,} tokens  |  CLI {cli_tok:,} tokens'
     if [ "$RTK_OK" = false ] && [ "$HEADROOM_OK" = false ]; then
         echo "  ⚠ Neither RTK nor Headroom are active."
         echo "    RTK:      brew install rtk-ai/tap/rtk && rtk init -g"
-        echo "    Headroom: pip install 'headroom-ai[all]' (starts with Tower)"
+        echo "    Headroom: pip install 'headroom-ai[all]' (auto-starts via SessionStart hook)"
     fi
 }
 

@@ -28,6 +28,24 @@ from rich.text import Text
 LOG_PATH = "/tmp/uss-tenkara/headroom.log"
 _PERF_RE = None
 
+
+def fetch_rtk_today() -> dict:
+    """Return today's RTK stats from `rtk gain --daily --format json`."""
+    import subprocess, datetime
+    today = datetime.date.today().isoformat()
+    try:
+        result = subprocess.run(
+            ["rtk", "gain", "--daily", "--format", "json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        data = json.loads(result.stdout)
+        for day in data.get("daily", []):
+            if day.get("date") == today:
+                return day
+    except Exception:
+        pass
+    return {}
+
 def _perf_re():
     global _PERF_RE
     if _PERF_RE is None:
@@ -93,7 +111,7 @@ def fmt_tokens(n: int) -> str:
     return str(n)
 
 
-def build_display(data: Optional[dict], port: int, last_updated: float) -> Layout:
+def build_display(data: Optional[dict], port: int, last_updated: float, rtk_today: dict = None) -> Layout:
     layout = Layout()
     layout.split_column(
         Layout(name="header", size=3),
@@ -162,13 +180,17 @@ def build_display(data: Optional[dict], port: int, last_updated: float) -> Layou
     left_table.add_column("label", style="dim", width=22)
     left_table.add_column("value", justify="right")
 
-    left_table.add_row("[bold white]TOTAL SAVED[/bold white]", f"[bold green]{fmt_tokens(total_saved)}[/bold green]")
-    left_table.add_row("", "")
-    left_table.add_row("[yellow]By layer[/yellow]", "")
-    left_table.add_row(
-        "RTK filtering",
-        f"[cyan]{fmt_tokens(cli_tokens)}[/cyan]  [dim]{cli_avg:.0f}% avg · {cli_cmds:,} cmds[/dim]",
+    # ── Today's RTK stats ─────────────────────────────────────────────
+    rtk_today_saved   = (rtk_today or {}).get("saved_tokens", 0)
+    rtk_today_pct     = (rtk_today or {}).get("savings_pct", 0)
+    rtk_today_cmds    = (rtk_today or {}).get("commands", 0)
+
+    left_table.add_row("[yellow]By layer[/yellow]", "[dim]today[/dim]")
+    rtk_today_str = (
+        f"[cyan]{fmt_tokens(rtk_today_saved)}[/cyan]  [dim]{rtk_today_pct:.0f}% avg · {rtk_today_cmds:,} cmds[/dim]"
+        if rtk_today_saved else "[dim]no data[/dim]"
     )
+    left_table.add_row("RTK filtering", rtk_today_str)
     if pc_tokens:
         left_table.add_row(
             "Prefix cache",
@@ -199,6 +221,15 @@ def build_display(data: Optional[dict], port: int, last_updated: float) -> Layou
                     f"  [dim]{label}[/dim]",
                     f"[dim]{fmt_tokens(sent)} sent · {fmt_tokens(saved)} saved · {pct:.0f}% · {reqs}r[/dim]",
                 )
+
+    # ── Overall (all-time) ────────────────────────────────────────────
+    left_table.add_row("", "")
+    left_table.add_row("[yellow]Overall[/yellow]", "")
+    left_table.add_row("[bold white]Total saved[/bold white]", f"[bold green]{fmt_tokens(total_saved)}[/bold green]")
+    left_table.add_row(
+        "RTK filtering",
+        f"[cyan]{fmt_tokens(cli_tokens)}[/cyan]  [dim]{cli_avg:.0f}% avg · {cli_cmds:,} cmds[/dim]",
+    )
 
     layout["left"].update(Panel(left_table, title="[bold]Savings[/bold]", border_style="yellow"))
 
@@ -244,6 +275,9 @@ def main():
     console = Console()
     last_data = None
     last_updated = 0.0
+    rtk_today = {}
+    rtk_today_fetched = 0.0
+    RTK_TODAY_TTL = 60.0  # refresh once per minute
 
     try:
         with Live(console=console, refresh_per_second=2, screen=True) as live:
@@ -252,7 +286,11 @@ def main():
                 if data is not None:
                     last_data = data
                     last_updated = time.time()
-                live.update(build_display(last_data, args.port, last_updated))
+                # Refresh today's RTK stats at most once per minute
+                if time.time() - rtk_today_fetched > RTK_TODAY_TTL:
+                    rtk_today = fetch_rtk_today()
+                    rtk_today_fetched = time.time()
+                live.update(build_display(last_data, args.port, last_updated, rtk_today))
                 time.sleep(args.interval)
     except KeyboardInterrupt:
         pass

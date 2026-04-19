@@ -657,10 +657,16 @@ def refresh_board_table(ctx) -> None:
 
     # Skip full table rebuild when visible state hasn't changed — table.clear() +
     # add_row() on every 3s tick is the biggest source of UI jank with active agents.
+    def _ticket_sort_key(p):
+        """Sort by numeric portion of ticket ID (ENG-293 → 293), non-numeric IDs last."""
+        import re
+        m = re.search(r'(\d+)', p.ticket_id or '')
+        return (0, int(m.group(1))) if m else (1, p.ticket_id or '')
+
     sig = "|".join(
         f"{p.callsign}:{p.status}:{p.fuel_pct}:{p.tokens_used}:{p.error_count}"
         f":{p.mood}:{p.flight_phase}:{p.status_hint}:{p.tool_calls}"
-        for p in sorted(pilots, key=lambda p: p.callsign)
+        for p in sorted(pilots, key=_ticket_sort_key)
     )
     if sig == ctx._board_state_sig:
         return
@@ -673,7 +679,7 @@ def refresh_board_table(ctx) -> None:
         prev_callsign = ctx._sorted_pilots[table.cursor_row].callsign
     table.clear()
 
-    ctx._sorted_pilots = sorted(pilots, key=lambda p: p.callsign)
+    ctx._sorted_pilots = sorted(pilots, key=_ticket_sort_key)
 
     critical = []
     for pilot in ctx._sorted_pilots:

@@ -87,8 +87,25 @@ class LegacySync:
             seen_tickets.add(tid)
 
             # Skip dismissed agents — user hit Z, don't resurrect
+            # UNLESS the worktree was recreated after dismissal (e.g. via /tq)
             if tid in ctx._dismissed_tickets:
-                continue
+                dismiss_ts = ctx._dismissed_at.get(tid, 0)
+                wt = Path(agent.worktree_path) if agent.worktree_path else None
+                directive_mtime = 0
+                if wt:
+                    d = wt / ".sortie" / "directive.md"
+                    try:
+                        directive_mtime = d.stat().st_mtime
+                    except OSError:
+                        pass
+                if directive_mtime > dismiss_ts:
+                    # Worktree was recreated after dismiss — un-dismiss
+                    ctx._dismissed_tickets.discard(tid)
+                    ctx._dismissed_at.pop(tid, None)
+                    ctx._add_radio("PRI-FLY",
+                                   f"{tid} re-queued (worktree recreated)", "system")
+                else:
+                    continue
 
             ctx._legacy_agents[tid] = agent
 

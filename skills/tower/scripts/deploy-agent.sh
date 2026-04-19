@@ -57,8 +57,8 @@ fi
 # Map short names to pinned checkpoints. Set to "latest" to let Claude
 # Code resolve to its current default for that tier.
 # Swap these when a new checkpoint drops — one place, all pilots.
-MODEL_SONNET="claude-sonnet-4-20250514"
-MODEL_OPUS="latest"
+MODEL_SONNET="claude-sonnet-4-5-20250929"
+MODEL_OPUS="claude-opus-4-5-20251101"
 MODEL_HAIKU="latest"
 
 # Validate & resolve
@@ -217,15 +217,14 @@ Tool results >2KB are cached automatically. Retrieve instead of re-running when 
 After completing a major phase (research → implementation → testing → PR), write a snapshot.
 This survives compaction — hooks restore it automatically so you don't lose context.
 
+**IMPORTANT**: Use ONLY the JSON-stdin heredoc format below. Do NOT pass snapshot content as positional args — it will fail.
+
     python3 '${SCRIPT_DIR}/storage-db.py' write-snapshot '${PROJECT_DIR}' - << 'SNAP'
     {
+      "session_id": "\$CLAUDE_SESSION_ID",
       "ticket_id": "${TICKET_ID}",
-      "phase": "<research|implementation|testing|pr>",
-      "key_findings": "<what you learned or built>",
-      "current_plan": "<what you're doing next>",
-      "remaining_steps": "<what's left>",
-      "files_touched": "<key files modified so far>",
-      "blockers": "<any blockers or empty>"
+      "remaining_pct": "<estimated % of context window remaining, e.g. 75>",
+      "snapshot": "Phase: <research|implementation|testing|pr>. Key findings: <what you learned or built>. Current plan: <what you're doing next>. Remaining: <what's left>. Files touched: <key files>. Blockers: <any or none>."
     }
     SNAP
 
@@ -288,6 +287,45 @@ fi
 # Set PREFLIGHT status — agent is on deck, not yet airborne
 python3 -c "import json,time; open('${SORTIE_DIR}/flight-status.json','w').write(json.dumps({'status':'PREFLIGHT','phase':'on deck - pre-launch checks','timestamp':int(time.time())}))"
 
+# ── Port allocation ──────────────────────────────────────────────────
+# Assign a unique dev server port to avoid collisions between agents.
+# Scans managed-servers.json + existing .sortie/port files to find the next free port.
+MANAGED_SERVERS="${PROJECT_DIR}/.sortie/managed-servers.json"
+BASE_PORT=3001  # 3000 reserved for the main project dev server
+
+# Collect all ports already in use
+USED_PORTS=""
+if [ -f "$MANAGED_SERVERS" ]; then
+  USED_PORTS=$(python3 -c "
+import json
+try:
+    with open('${MANAGED_SERVERS}') as f:
+        servers = json.load(f)
+    for s in servers:
+        url = s.get('url', '')
+        if ':' in url:
+            print(url.split(':')[-1])
+except: pass
+" 2>/dev/null)
+fi
+
+# Also check port files from other worktrees (in case managed-servers.json is stale)
+# Use find to avoid zsh nomatch errors when no port files exist
+while IFS= read -r PORT_FILE; do
+  [ -n "$PORT_FILE" ] && USED_PORTS="${USED_PORTS}
+$(cat "$PORT_FILE")"
+done < <(find "${PROJECT_DIR}/.claude/worktrees" -path "*/.sortie/port" -type f 2>/dev/null)
+
+# Find the next available port starting from BASE_PORT
+ASSIGNED_PORT=$BASE_PORT
+while echo "$USED_PORTS" | grep -q "^${ASSIGNED_PORT}$"; do
+  ASSIGNED_PORT=$((ASSIGNED_PORT + 1))
+done
+
+# Write the port file so the agent and other deployments know this port is taken
+echo "$ASSIGNED_PORT" > "${SORTIE_DIR}/port"
+echo "PORT:${ASSIGNED_PORT}"
+
 # ── Env setup ─────────────────────────────────────────────────────────
 cd "$WORKTREE_PATH"
 
@@ -336,6 +374,7 @@ cat > "${LAUNCH_SCRIPT}" << 'LAUNCH_EOF'
 LAUNCH_EOF
 cat >> "${LAUNCH_SCRIPT}" << LAUNCH_EOF2
 cd '${WORKTREE_PATH}'
+export PORT=${ASSIGNED_PORT}
 
 # Cleanup on exit — signal session ended so dashboard sets RECOVERED
 # Also runs auto-debrief in case pane was killed without a graceful /exit

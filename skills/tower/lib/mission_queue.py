@@ -163,9 +163,16 @@ class MissionQueue:
         return queued[0]
 
     def queued(self) -> List[Mission]:
+        def _numeric_id(m: Mission) -> tuple[int, int, str]:
+            """Sort by numeric suffix of ticket ID. Non-numeric IDs go last."""
+            match = re.search(r"(\d+)$", m.id)
+            if match:
+                return (0, int(match.group(1)), m.id)
+            return (1, 0, m.id)
+
         return sorted(
             [m for m in self._missions.values() if m.status == "QUEUED"],
-            key=lambda m: (m.priority, m.created_at),
+            key=_numeric_id,
         )
 
     def active(self) -> List[Mission]:
@@ -307,7 +314,12 @@ class MissionQueue:
         added = 0
         seen_ids: set[str] = set()
 
-        for f in sorted(queue_dir.iterdir()):
+        def _numeric_key(p: Path) -> int:
+            import re
+            m = re.search(r"(\d+)", p.stem)
+            return int(m.group(1)) if m else 0
+
+        for f in sorted(queue_dir.iterdir(), key=_numeric_key):
             if f.suffix != ".json" or f.name.startswith("."):
                 continue
             try:
@@ -318,9 +330,17 @@ class MissionQueue:
             mission_id = data.get("id") or f.stem
             seen_ids.add(mission_id)
 
-            # Skip if already tracked (don't overwrite in-progress status)
-            if mission_id in self._missions:
-                continue
+            # Skip if already tracked AND still in-flight.
+            # Terminal missions (COMPLETE/FAILED/RECOVERED) whose queue
+            # file still exists get re-queued — this prevents the bug
+            # where deployed-then-recovered missions (e.g. PR-* reviews)
+            # vanish from the queue panel forever.
+            existing = self._missions.get(mission_id)
+            if existing is not None:
+                if existing.status in ("COMPLETE", "FAILED", "RECOVERED"):
+                    del self._missions[mission_id]  # will be re-added below
+                else:
+                    continue  # ACTIVE/DEPLOYING/QUEUED — don't touch
 
             mission = Mission(
                 id=mission_id,

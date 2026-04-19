@@ -392,6 +392,7 @@ class PriFlyCommander(App):
 
         # Dismissed tickets — prevents _sync_legacy_agents from re-adding them
         self._dismissed_tickets: set[str] = set()
+        self._dismissed_at: dict[str, float] = {}  # tid -> epoch when dismissed
 
     def compose(self) -> ComposeResult:
         yield PriFlyHeader(id="header-bar")

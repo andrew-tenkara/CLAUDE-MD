@@ -43,39 +43,11 @@ python3 -c "import textual; import watchdog" 2>/dev/null || pip3 install -q text
 # Preflight — patch existing worktrees with .claudeignore / .mcp.json
 bash "${SCRIPT_DIR}/preflight-worktrees.sh" "$PROJECT_DIR" 2>&1 | while IFS= read -r line; do echo "$line"; done
 
-# ── Headroom proxy (context compression for all pilots) ──────────────
-HEADROOM_PORT=8787
-HEADROOM_PID_FILE="/tmp/uss-tenkara/headroom.pid"
-HEADROOM_LOG="/tmp/uss-tenkara/headroom.log"
-mkdir -p /tmp/uss-tenkara
-
-# Kill stale headroom if running — use pgrep as authoritative source (PID file may be stale)
+# ── Headroom proxy — kill stale so SessionStart hook gets a fresh instance ──
 STALE_PID=$(pgrep -f "headroom proxy" | head -1)
 if [ -n "$STALE_PID" ]; then
   kill "$STALE_PID" 2>/dev/null || true
-fi
-rm -f "$HEADROOM_PID_FILE"
-
-if command -v headroom &>/dev/null; then
-  headroom proxy --port "$HEADROOM_PORT" > "$HEADROOM_LOG" 2>&1 &
-  # Wait for proxy to be ready (Kompress ML model preload takes 10-15s)
-  for i in $(seq 1 20); do
-    if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 1
-  done
-  if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
-    # headroom forks a child — use pgrep to get the real worker PID
-    REAL_PID=$(pgrep -f "headroom proxy" | head -1)
-    echo "${REAL_PID:-unknown}" > "$HEADROOM_PID_FILE"
-    echo "HEADROOM:running on port ${HEADROOM_PORT} (pid ${REAL_PID:-?})"
-  else
-    echo "HEADROOM:WARNING — proxy failed to start, pilots will connect directly" >&2
-    rm -f "$HEADROOM_PID_FILE"
-  fi
-else
-  echo "HEADROOM:not installed — skipping (pip install 'headroom-ai[all]' to enable)"
+  sleep 1  # Let port release before hook restarts it
 fi
 
 # State dir for IPC

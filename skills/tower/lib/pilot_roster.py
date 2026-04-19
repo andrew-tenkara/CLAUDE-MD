@@ -9,6 +9,8 @@ SQUADRON_POOL = [
     "Phoenix", "Reaper", "Ghost", "Viper", "Iceman",
     "Maverick", "Shadow", "Thunder", "Raptor", "Falcon",
     "Specter", "Warden", "Nomad", "Corsair", "Sentinel",
+    "Bandit", "Mustang", "Cobra", "Talon", "Valkyrie",
+    "Harrier", "Stinger", "Condor", "Osprey", "Hornet",
 ]
 
 PILOT_TRAITS = [
@@ -196,7 +198,10 @@ class PilotRoster:
             self._ticket_squadron[ticket_id] = squadron
             return squadron
         if not self._available_squadrons:
-            raise RuntimeError("Squadron pool exhausted — all 15 squadrons are deployed.")
+            squadron = f"Callsign-{len(self._ticket_squadron) + 1}"
+            self._ticket_squadron[ticket_id] = squadron
+            self._squadron_seq[squadron] = 0
+            return squadron
         squadron = self._available_squadrons.pop(0)
         self._ticket_squadron[ticket_id] = squadron
         self._squadron_seq[squadron] = 0

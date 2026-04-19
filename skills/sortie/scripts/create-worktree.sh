@@ -66,15 +66,22 @@ fi
 
 # Check if worktree already exists
 if [ -d "$WORKTREE_PATH" ]; then
-  echo "WORKTREE_EXISTS:$WORKTREE_PATH"
-  echo "Worktree already exists at $WORKTREE_PATH" >&2
-  # Ensure .sortie/ exists even for pre-existing worktrees
-  mkdir -p "$WORKTREE_PATH/.sortie"
-  touch "$WORKTREE_PATH/.sortie/progress.md"
-  if [ -n "$MODEL" ]; then
-    echo "$MODEL" > "$WORKTREE_PATH/.sortie/model.txt"
+  if [ -f "$WORKTREE_PATH/.git" ]; then
+    # Real worktree (has .git link file) — reuse it
+    echo "WORKTREE_EXISTS:$WORKTREE_PATH"
+    echo "Worktree already exists at $WORKTREE_PATH" >&2
+    mkdir -p "$WORKTREE_PATH/.sortie"
+    touch "$WORKTREE_PATH/.sortie/progress.md"
+    if [ -n "$MODEL" ]; then
+      echo "$MODEL" > "$WORKTREE_PATH/.sortie/model.txt"
+    fi
+    exit 2
+  else
+    # Ghost directory (no .git link) — clean up and recreate
+    echo "GHOST_CLEANUP: removing $WORKTREE_PATH (not a valid git worktree)" >&2
+    rm -rf "$WORKTREE_PATH"
+    git worktree prune 2>/dev/null || true
   fi
-  exit 2
 fi
 
 # Check if branch already exists

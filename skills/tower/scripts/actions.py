@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import re as _re
 from pathlib import Path
 from typing import Optional
@@ -84,6 +85,7 @@ class Actions:
 
         ctx._roster.remove(callsign)
         ctx._dismissed_tickets.add(tid)
+        ctx._dismissed_at[tid] = time.time()
         ctx._board_state_sig = "__force_rebuild__"
         ctx._add_radio("PRI-FLY", f"{callsign} dismissed from board", "system")
 

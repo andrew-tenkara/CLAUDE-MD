@@ -33,6 +33,8 @@ CCR (Compress-Cache-Retrieve) commands:
       Prints HIT or MISS only (fast path for dedup hooks).
   storage-db.py write-snapshot <project-dir> <session-id> <ticket-id> <remaining-pct> -
       stdin=snapshot text. Stores pre-compaction context snapshot.
+  storage-db.py write-snapshot <project-dir> -
+      JSON via stdin. Keys: session_id, ticket_id, remaining_pct, snapshot
   storage-db.py get-latest-snapshot <project-dir> <session-id>
       Returns latest snapshot text for this session, or SNAPSHOT:none.
   storage-db.py prune-tool-cache <project-dir>
@@ -216,6 +218,17 @@ def cmd_init(project_dir: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_snapshots_session
             ON context_snapshots(session_id, created_at DESC);
     """)
+
+    # Schema migrations — add columns that may be missing from older DBs
+    # (CREATE TABLE IF NOT EXISTS won't alter existing tables)
+    for col, typedef in [
+        ("valid_until", "INTEGER"),
+        ("superseded_by", "INTEGER REFERENCES insights(id)"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE insights ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass  # column already exists
 
     # Backfill FTS5 for any existing rows that predate this schema
     conn.execute("""
@@ -816,6 +829,27 @@ def cmd_write_snapshot(project_dir: str, session_id: str, ticket_id: str,
     print(f"SNAPSHOT:written for session {session_id[:16]}")
 
 
+def cmd_write_snapshot_from_dict(project_dir: str, blob: dict) -> None:
+    """Write a context snapshot from a JSON dict (stdin-friendly calling convention)."""
+    session_id = blob.get("session_id", "")
+    ticket_id = blob.get("ticket_id", "")
+    remaining_pct = blob.get("remaining_pct", "")
+    snapshot = blob.get("snapshot", "")
+    if not session_id:
+        print("ERROR: write-snapshot JSON requires 'session_id'", file=sys.stderr)
+        sys.exit(1)
+    conn = get_db(project_dir)
+    conn.execute(
+        """INSERT INTO context_snapshots (session_id, ticket_id, remaining_pct, snapshot)
+           VALUES (?, ?, ?, ?)""",
+        (session_id, ticket_id or None,
+         float(remaining_pct) if remaining_pct else None, snapshot),
+    )
+    conn.commit()
+    conn.close()
+    print(f"SNAPSHOT:written for session {session_id[:16]}")
+
+
 def cmd_get_latest_snapshot(project_dir: str, session_id: str) -> None:
     """Return latest snapshot text for this session, or SNAPSHOT:none."""
     conn = get_db(project_dir)
@@ -858,7 +892,8 @@ if __name__ == "__main__":
         cmd_write_debrief(
             sys.argv[2], d["ticket_id"], d.get("branch", ""),
             d.get("model", ""), d.get("what_done", ""), d.get("whats_left", ""),
-            d.get("decisions", ""), d.get("gotchas", ""), d.get("files_touched", ""),
+            d.get("decisions", ""), d.get("gotchas", ""),
+            json.dumps(d["files_touched"]) if isinstance(d.get("files_touched"), list) else d.get("files_touched", ""),
             d.get("pr_url", ""), d.get("pr_status", ""), d.get("branch_status", ""),
         )
 
@@ -944,8 +979,28 @@ if __name__ == "__main__":
         cmd_check_tool_cache(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
 
     elif cmd == "write-snapshot":
-        # write-snapshot <project_dir> <session_id> <ticket_id> <remaining_pct> -
-        cmd_write_snapshot(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+        # Two calling conventions:
+        # 1) write-snapshot <project_dir> <session_id> <ticket_id> <remaining_pct>  (stdin=snapshot text)
+        # 2) write-snapshot <project_dir> -  (stdin=JSON with session_id, ticket_id, remaining_pct, snapshot)
+        if len(sys.argv) >= 6:
+            # Validate remaining_pct is numeric — agents sometimes stuff text here by mistake
+            try:
+                float(sys.argv[5])
+            except ValueError:
+                print(f"ERROR: write-snapshot arg 4 (remaining_pct) must be numeric, got: '{sys.argv[5][:80]}'", file=sys.stderr)
+                print("Usage: write-snapshot <project-dir> <session-id> <ticket-id> <remaining-pct>  (stdin=snapshot text)", file=sys.stderr)
+                print("   OR: write-snapshot <project-dir> - << 'SNAP'", file=sys.stderr)
+                print('       {"session_id":"...","ticket_id":"...","remaining_pct":"50","snapshot":"..."}', file=sys.stderr)
+                print("       SNAP", file=sys.stderr)
+                sys.exit(1)
+            cmd_write_snapshot(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+        elif len(sys.argv) >= 4 and sys.argv[3] == "-":
+            import json as _json
+            blob = _json.loads(sys.stdin.read())
+            cmd_write_snapshot_from_dict(sys.argv[2], blob)
+        else:
+            print("ERROR: write-snapshot requires either 4 positional args or '<project-dir> -' with JSON stdin", file=sys.stderr)
+            sys.exit(1)
 
     elif cmd == "get-latest-snapshot":
         cmd_get_latest_snapshot(sys.argv[2], sys.argv[3])
