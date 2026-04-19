@@ -50,11 +50,23 @@ Run: `bash "$SKILL_DIR/scripts/dashboard.sh"`
 
 Shows a formatted one-shot report with RTK savings and Headroom savings.
 
+After showing the dashboard, tell the user about the live TUI monitor:
+
+```
+For a live dashboard that auto-refreshes, run this in a separate terminal:
+
+  python3 ~/.claude/skills/token-savings/scripts/tui.py
+
+Split-pane view with RTK on the left, Headroom on the right.
+Auto-refreshes every 5 seconds. Ctrl+C to exit.
+Requires: pip install rich
+```
+
 ## When invoked with no setup needed
 
-Skip straight to step 6 (dashboard). After showing stats, mention:
+Skip straight to step 6 (dashboard). After showing stats, always provide the TUI command and also mention:
 - "Run `rtk discover` to find missed optimization opportunities"
-- "Open http://localhost:8787/dashboard for live monitoring"
+- "Open http://localhost:8787/dashboard for the Headroom-only web view"
 
 ## Bonus: Headroom Learn
 
@@ -68,7 +80,20 @@ Add `--apply` to write recommendations to CLAUDE.md and MEMORY.md. Uses LiteLLM 
 
 ## Gotchas
 
-### 1. RTK hook silently fails without PATH fix (GitHub #685)
+### 1. `rtk init -g` overwrites your PATH fix
+
+`rtk init -g` regenerates `~/.claude/hooks/rtk-rewrite.sh` from scratch, blowing away any manual PATH edits. The recommended fix is a **wrapper script** that survives overwrites:
+
+Create `~/.claude/hooks/rtk-wrapper.sh`:
+```bash
+#!/usr/bin/env bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:$PATH"
+exec bash "$(dirname "$0")/rtk-rewrite.sh" "$@"
+```
+
+Then point the hook in `~/.claude/settings.json` at `rtk-wrapper.sh` instead of `rtk-rewrite.sh`. RTK owns its script, you own the wrapper. Neither steps on the other.
+
+### 2. RTK hook silently fails without PATH fix (GitHub #685)
 
 Claude Code runs hooks in a minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Homebrew binaries (`/opt/homebrew/bin/`) and cargo installs (`~/.cargo/bin/`) are invisible. Without the PATH export at the top of `rtk-rewrite.sh`, `command -v rtk` fails silently, the hook exits 0, and every command passes through unrewritten. Zero errors. Zero warnings. You just silently lose all savings.
 
