@@ -131,6 +131,19 @@ else
   echo -e "  ${RED}✗${NC} Hook not wired"
 fi
 
+# TUI dependency check
+echo -e "${BOLD}TUI Dashboard${NC}"
+if python3 -c "import rich" &>/dev/null; then
+  RICH_VERSION="$(python3 -c "import rich; print(rich.__version__)" 2>/dev/null)"
+  echo -e "  ${GREEN}✓${NC} rich installed (${RICH_VERSION})"
+else
+  echo -e "  ${RED}✗${NC} rich not installed — required for live TUI dashboard"
+  echo -e "    Install with one of:"
+  echo -e "      pip install rich"
+  echo -e "      pipx install rich"
+  echo -e "      python3 -m pip install --user rich"
+fi
+
 echo ""
 
 # Overall

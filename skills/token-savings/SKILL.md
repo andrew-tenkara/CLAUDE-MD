@@ -50,16 +50,28 @@ Run: `bash "$SKILL_DIR/scripts/dashboard.sh"`
 
 Shows a formatted one-shot report with RTK savings and Headroom savings.
 
-After showing the dashboard, tell the user about the live TUI monitor:
+After showing the dashboard, tell the user about the live TUI monitor. First ensure the `rich` package is installed, then launch:
 
 ```
-For a live dashboard that auto-refreshes, run this in a separate terminal:
+The TUI dashboard requires the `rich` Python package. Install it before launching:
+
+  # Try pip first (most common)
+  pip install rich
+
+  # If pip is not available or restricted, use pipx
+  pipx install rich          # installs into isolated env
+  # OR use pip with --user flag
+  python3 -m pip install --user rich
+
+  # Verify it's installed
+  python3 -c "import rich; print(rich.__version__)"
+
+Then run in a separate terminal:
 
   python3 ~/.claude/skills/token-savings/scripts/tui.py
 
-Split-pane view with RTK on the left, Headroom on the right.
-Auto-refreshes every 5 seconds. Ctrl+C to exit.
-Requires: pip install rich
+Stacked layout with RTK, Headroom, and Recent Requests panels.
+Auto-refreshes every 2 seconds. Ctrl+C to exit.
 ```
 
 ## When invoked with no setup needed

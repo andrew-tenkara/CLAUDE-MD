@@ -24,7 +24,10 @@ try:
     from rich.table import Table
     from rich.text import Text
 except ImportError:
-    print("Rich is required: pip install rich")
+    print("Error: 'rich' package not found. Install with one of:")
+    print("  pip install rich")
+    print("  pipx install rich")
+    print("  python3 -m pip install --user rich")
     sys.exit(1)
 
 HEADROOM_URL = "http://localhost:8787"
