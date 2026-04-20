@@ -30,7 +30,7 @@ except ImportError:
 HEADROOM_URL = "http://localhost:8787"
 REFRESH_INTERVAL = 2
 MAX_RECENT = 30
-NARROW_THRESHOLD = 160  # columns; below this, stack vertically and hide extras
+NARROW_THRESHOLD = 200  # columns; below this, stack vertically and hide extras
 console = Console()
 
 # Headroom log path — same as Tower's headroom-monitor.py
@@ -267,9 +267,12 @@ def build_recent_panel(stats, narrow=False):
 
     t = Table(box=None, padding=(0, 1), expand=True)
     if narrow:
-        # Compact: time, model (short), saved, pct — skip before/after/transforms
+        # Compact: time, model, after (original), before (compressed), saved, pct
+        # Headroom log: tok_before = compressed, tok_after = original (with proxy overhead)
         t.add_column("time", style="dim", width=5, no_wrap=True)
         t.add_column("model", width=10, no_wrap=True, overflow="ellipsis")
+        t.add_column("before", justify="right", width=7, no_wrap=True)
+        t.add_column("after", justify="right", width=7, no_wrap=True)
         t.add_column("saved", justify="right", width=7, no_wrap=True)
         t.add_column("pct", justify="right", width=4, no_wrap=True)
     else:
@@ -297,12 +300,23 @@ def build_recent_panel(stats, narrow=False):
         else:
             pct_style = "dim"
 
+        is_noop = r["after"] >= r["before"]
+        noop_marker = " [dim]noop[/dim]" if is_noop else ""
+
         if narrow:
+            transforms = r.get("transforms", "")
             t.add_row(
-                r["ts"][-5:],  # HH:MM only
+                r["ts"][-5:],
                 model[:10],
+                fmt(r["before"]),
+                fmt(r["after"]),
                 fmt(r["saved"]),
-                Text(f"{pct:.0f}%", style=pct_style),
+                Text(f"{pct:.0f}%", style=pct_style) if not is_noop else Text("noop", style="dim"),
+            )
+            t.add_row(
+                "",
+                Text(transforms[:30] if transforms else "—", style="dim italic"),
+                "", "", "", "",
             )
         else:
             t.add_row(
@@ -311,7 +325,7 @@ def build_recent_panel(stats, narrow=False):
                 fmt(r["before"]),
                 fmt(r["after"]),
                 fmt(r["saved"]),
-                Text(f"{pct:.0f}%", style=pct_style),
+                Text(f"{pct:.0f}%", style=pct_style) if not is_noop else Text("noop", style="dim"),
                 Text(r["transforms"][:35], style="dim"),
             )
 
