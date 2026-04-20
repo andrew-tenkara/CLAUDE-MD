@@ -337,16 +337,25 @@ def build_recent_panel(stats, narrow=False):
             pct_style = "dim"
 
         is_noop = r["after"] >= r["before"]
-        noop_marker = " [dim]noop[/dim]" if is_noop else ""
+        saved = r["saved"]
+        transforms = r.get("transforms", "")
+
+        # Prefix freezing: content_router reports noop but pipeline saved tokens
+        # via frozen prefix messages — relabel so the dashboard isn't confusing
+        if saved > 0 and "noop" in transforms:
+            transforms = transforms.replace("router:noop", "prefix:frozen")
+        elif saved > 0 and "excluded" in transforms and "noop" not in transforms:
+            # Content router excluded messages but prefix freezing also contributed
+            if r["before"] - r["after"] > saved * 0.1:
+                transforms = f"prefix:frozen + {transforms}"
 
         if narrow:
-            transforms = r.get("transforms", "")
             t.add_row(
                 r["ts"][-5:],
                 model[:10],
                 fmt(r["before"]),
                 fmt(r["after"]),
-                fmt(r["saved"]),
+                fmt(saved),
                 Text(f"{pct:.0f}%", style=pct_style) if not is_noop else Text("noop", style="dim"),
             )
             t.add_row(
@@ -360,9 +369,9 @@ def build_recent_panel(stats, narrow=False):
                 model,
                 fmt(r["before"]),
                 fmt(r["after"]),
-                fmt(r["saved"]),
+                fmt(saved),
                 Text(f"{pct:.0f}%", style=pct_style) if not is_noop else Text("noop", style="dim"),
-                Text(r["transforms"][:35], style="dim"),
+                Text(transforms[:35], style="dim"),
             )
 
     footer = Text()
