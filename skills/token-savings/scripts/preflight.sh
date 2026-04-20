@@ -131,6 +131,29 @@ else
   echo -e "  ${RED}✗${NC} Hook not wired"
 fi
 
+# Check if ANTHROPIC_BASE_URL is set (critical — without this, proxy gets zero traffic)
+if [[ "${ANTHROPIC_BASE_URL:-}" == *"localhost:8787"* ]]; then
+  echo -e "  ${GREEN}✓${NC} ANTHROPIC_BASE_URL routed to proxy"
+elif [[ -n "${ANTHROPIC_BASE_URL:-}" ]]; then
+  echo -e "  ${YELLOW}○${NC} ANTHROPIC_BASE_URL set to ${ANTHROPIC_BASE_URL} (not Headroom)"
+else
+  echo -e "  ${RED}✗${NC} ANTHROPIC_BASE_URL not set — API traffic bypasses Headroom entirely"
+  echo -e "    The SessionStart hook must write to \$CLAUDE_ENV_FILE:"
+  echo -e "      echo 'export ANTHROPIC_BASE_URL=http://localhost:8787' >> \"\$CLAUDE_ENV_FILE\""
+  echo -e "    Or set it globally in your shell profile."
+fi
+
+# Check if the hook script actually writes ANTHROPIC_BASE_URL
+HOOK_SCRIPT="${HOME}/.claude/hooks/headroom-autostart.sh"
+if [[ -f "$HOOK_SCRIPT" ]]; then
+  if grep -q "ANTHROPIC_BASE_URL" "$HOOK_SCRIPT"; then
+    echo -e "  ${GREEN}✓${NC} Hook sets ANTHROPIC_BASE_URL via CLAUDE_ENV_FILE"
+  else
+    echo -e "  ${RED}✗${NC} Hook does NOT set ANTHROPIC_BASE_URL — proxy will receive no traffic"
+    echo -e "    Update your hook script to write ANTHROPIC_BASE_URL to \$CLAUDE_ENV_FILE"
+  fi
+fi
+
 # TUI dependency check
 echo -e "${BOLD}TUI Dashboard${NC}"
 if python3 -c "import rich" &>/dev/null; then

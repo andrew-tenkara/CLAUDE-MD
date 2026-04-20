@@ -41,6 +41,14 @@ Check `~/.claude/settings.json` for missing hooks. If a hook is missing, offer t
 **Headroom hook** (SessionStart):
 - Hook script location: `~/.claude/hooks/headroom-autostart.sh`
 - The script should: check if Headroom is already running on :8787, if not start it in background, wait for health endpoint.
+- **CRITICAL**: The hook MUST set `ANTHROPIC_BASE_URL` via `$CLAUDE_ENV_FILE`. Without this, the proxy runs but receives zero traffic — Claude Code sends all API requests directly to Anthropic, completely bypassing compression. This is the #1 silent failure mode.
+  ```bash
+  # In the hook script, after confirming proxy is healthy:
+  if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
+    echo "export ANTHROPIC_BASE_URL=http://localhost:8787" >> "$CLAUDE_ENV_FILE"
+  fi
+  ```
+- The preflight checks both that the hook exists AND that it writes `ANTHROPIC_BASE_URL`.
 
 After wiring, re-run preflight to confirm: `bash "$SKILL_DIR/scripts/preflight.sh"`
 
@@ -145,6 +153,8 @@ Claude Code loads hooks at session start. If you fix the PATH issue or add a new
 ### 4. Headroom falls back silently
 
 If Headroom fails to start (port conflict, crash, missing dependency), the SessionStart hook exits 0 and Claude Code connects directly to Anthropic. No error. Sessions work fine — you just don't get compression. Check `curl -sf http://localhost:8787/health` to verify it's actually running.
+
+**ANTHROPIC_BASE_URL not set (silent zero-traffic failure)**: The proxy can be healthy on :8787 but receiving zero traffic if `ANTHROPIC_BASE_URL` was never set. The hook must write `export ANTHROPIC_BASE_URL=http://localhost:8787` to `$CLAUDE_ENV_FILE`. Verify with `echo $ANTHROPIC_BASE_URL` in a Claude Code Bash call — if it's empty or points to `api.anthropic.com`, the proxy is being bypassed. The preflight script checks for this.
 
 ### 5. RTK name collision
 
