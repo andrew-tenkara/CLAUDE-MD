@@ -86,7 +86,7 @@ echo ""
 echo -e "${BOLD}Headroom (Session Compression)${NC}"
 
 STATS_OK=false
-if curl -sf "${HEADROOM_URL}/stats" > "$STATS_FILE" 2>/dev/null && [[ -s "$STATS_FILE" ]]; then
+if curl -sf -H "Accept: application/json" "${HEADROOM_URL}/stats" > "$STATS_FILE" 2>/dev/null && [[ -s "$STATS_FILE" ]]; then
   STATS_OK=true
 fi
 

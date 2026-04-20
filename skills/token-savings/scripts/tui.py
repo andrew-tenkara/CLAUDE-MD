@@ -135,6 +135,7 @@ def get_rtk_stats():
 def get_headroom_stats():
     try:
         req = urllib.request.Request(f"{HEADROOM_URL}/stats")
+        req.add_header("Accept", "application/json")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read().decode())
     except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError):
@@ -193,28 +194,47 @@ def build_headroom_panel(stats, narrow=False):
     ver = get_headroom_version() or "?"
     t.add_row("Status", f"[green]LIVE on :8787[/green] (v{ver})")
 
+    # Compression stats — try new path first, fall back to legacy
     comp = stats.get("summary", {}).get("compression", {})
-    t.add_row("Compressed", f"[cyan]{fmt(comp.get('total_tokens_removed', 0))}[/cyan] ({comp.get('avg_compression_pct', 0):.1f}%)")
+    tokens_data = stats.get("tokens", {})
+    tokens_removed = comp.get("total_tokens_removed", tokens_data.get("saved", 0))
+    avg_pct = comp.get("avg_compression_pct", tokens_data.get("savings_percent", 0))
+    t.add_row("Compressed", f"[cyan]{fmt(tokens_removed)}[/cyan] ({avg_pct:.1f}%)")
 
-    cache = stats.get("prefix_cache", {}).get("totals", {})
-    rate = cache.get("hit_rate", 0)
-    rate = rate / 100 if rate > 1 else rate
+    # Cache savings — try new savings.by_layer path, fall back to legacy prefix_cache
+    savings_layer = stats.get("savings", {}).get("by_layer", {})
+    cache_usd = savings_layer.get("prefix_cache", {}).get("discount_usd", 0)
+    # Legacy fallback
+    if not cache_usd:
+        cache_usd = stats.get("prefix_cache", {}).get("totals", {}).get("savings_usd", 0)
     if narrow:
-        t.add_row("Cache", f"{rate:.0%} hit, ${cache.get('savings_usd', 0):.2f}")
+        t.add_row("Cache", f"${cache_usd:.2f} saved")
     else:
-        t.add_row("Prefix cache", f"{rate:.0%} hit ({fmt(cache.get('cache_read_tokens', 0))} reads, ${cache.get('savings_usd', 0):.2f})")
+        t.add_row("Prefix cache", f"${cache_usd:.2f} saved")
         t.add_row("", "[dim]Anthropic-side cache; Headroom keeps prefix stable for hits[/dim]")
 
-    overhead = stats.get("overhead", {})
-    t.add_row("Overhead", f"{overhead.get('average_ms', 0):.0f}ms avg")
-    t.add_row("Requests", f"{stats.get('summary', {}).get('api_requests', 0):,}")
+    # Cost savings
+    cost = stats.get("summary", {}).get("cost", stats.get("cost", {}))
+    total_saved_usd = cost.get("total_saved_usd", cost.get("savings_usd", 0))
+    if total_saved_usd:
+        t.add_row("Cost saved", f"[cyan]${total_saved_usd:.2f}[/cyan]")
 
-    # Per-model
-    per_model = stats.get("cost", {}).get("per_model", {})
-    if per_model:
+    # TTFB / overhead
+    ttfb = stats.get("ttfb", stats.get("overhead", {}))
+    avg_ms = ttfb.get("average_ms", 0)
+    if avg_ms:
+        t.add_row("Avg TTFB", f"{avg_ms:.0f}ms")
+
+    t.add_row("Requests", f"{stats.get('requests', {}).get('total', stats.get('summary', {}).get('api_requests', 0)):,}")
+
+    # Per-model — try new requests.by_model (count only), fall back to legacy cost.per_model
+    per_model_legacy = stats.get("cost", {}).get("per_model", {})
+    per_model_counts = stats.get("requests", {}).get("by_model", {})
+
+    if per_model_legacy:
         t.add_row("", "")
         t.add_row("[bold]Per-Model[/bold]", "")
-        for model, d in sorted(per_model.items()):
+        for model, d in sorted(per_model_legacy.items()):
             short = model.replace("claude-", "")
             for sfx in ["-20250514", "-20250929", "-20251001", "-20251101", "-20260101"]:
                 short = short.replace(sfx, "")
@@ -222,6 +242,19 @@ def build_headroom_panel(stats, narrow=False):
                 t.add_row(f"  {short[:10]}", f"{fmt(d.get('tokens_saved', 0))} saved {d.get('reduction_pct', 0):.0f}%")
             else:
                 t.add_row(f"  {short}", f"{fmt(d.get('tokens_sent', 0)):>7} sent {fmt(d.get('tokens_saved', 0)):>7} saved {d.get('reduction_pct', 0):>5.1f}% ({d.get('requests', 0)})")
+    elif per_model_counts:
+        t.add_row("", "")
+        t.add_row("[bold]Per-Model[/bold]", "")
+        for model, count in sorted(per_model_counts.items()):
+            if model.startswith("passthrough:"):
+                continue
+            short = model.replace("claude-", "")
+            for sfx in ["-20250514", "-20250929", "-20251001", "-20251101", "-20260101"]:
+                short = short.replace(sfx, "")
+            if narrow:
+                t.add_row(f"  {short[:10]}", f"{count} reqs")
+            else:
+                t.add_row(f"  {short}", f"{count} reqs")
 
     return Panel(t, title=title, border_style="blue")
 
