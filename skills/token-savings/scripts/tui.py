@@ -30,6 +30,7 @@ except ImportError:
 HEADROOM_URL = "http://localhost:8787"
 REFRESH_INTERVAL = 2
 MAX_RECENT = 30
+NARROW_THRESHOLD = 160  # columns; below this, stack vertically and hide extras
 console = Console()
 
 # Headroom log path — same as Tower's headroom-monitor.py
@@ -146,54 +147,60 @@ def get_headroom_version():
         return None
 
 
-def build_rtk_panel(stats):
+def build_rtk_panel(stats, narrow=False):
     if stats is None:
         return Panel(
             Text("NOT INSTALLED\n\nInstall: brew install rtk-ai/tap/rtk", style="yellow"),
-            title="[bold]RTK: Command Output Filtering[/bold]",
+            title="[bold]RTK[/bold]" if narrow else "[bold]RTK: Command Output Filtering[/bold]",
             border_style="yellow",
         )
-    t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_column("k", style="dim", width=16)
-    t.add_column("v")
+    t = Table(show_header=False, box=None, padding=(0, 1 if narrow else 2))
+    t.add_column("k", style="dim", width=12 if narrow else 16, no_wrap=True)
+    t.add_column("v", no_wrap=True, overflow="ellipsis")
     t.add_row("Status", f"[green]ACTIVE[/green] ({stats['version']})")
     t.add_row("Tokens saved", f"[cyan]{fmt(stats['tokens_saved'])}[/cyan]")
     t.add_row("Commands", f"{stats['total_commands']:,}")
     pct = stats["savings_pct"] / 100
-    bar = "█" * int(pct * 25) + "░" * (25 - int(pct * 25))
-    t.add_row("CLI reduction", f"[green]{bar}[/green] {stats['savings_pct']:.1f}% of Bash output filtered")
+    bar_width = 15 if narrow else 25
+    bar = "█" * int(pct * bar_width) + "░" * (bar_width - int(pct * bar_width))
+    t.add_row("CLI reduction", f"[green]{bar}[/green] {stats['savings_pct']:.1f}%")
     if stats["top"]:
         t.add_row("", "")
         t.add_row("[bold]Top Commands[/bold]", "")
-        for c in stats["top"][:6]:
-            t.add_row(f"  {c['cmd']}", f"{c['count']:>8}  {c['saved']:>8}  {c['pct']:>6}")
-    return Panel(t, title="[bold]RTK: Command Output Filtering[/bold]", border_style="green")
+        limit = 4 if narrow else 6
+        for c in stats["top"][:limit]:
+            t.add_row(f"  {c['cmd']}", f"{c['count']:>6} {c['saved']:>7} {c['pct']:>5}")
+    return Panel(t, title="[bold]RTK[/bold]" if narrow else "[bold]RTK: Command Output Filtering[/bold]", border_style="green")
 
 
-def build_headroom_panel(stats):
+def build_headroom_panel(stats, narrow=False):
+    title = "[bold]Headroom[/bold]" if narrow else "[bold]Headroom: Session Compression[/bold]"
     if stats is None:
         ver = get_headroom_version()
         if ver:
             return Panel(Text(f"RUNNING (v{ver}) but /stats unavailable", style="yellow"),
-                         title="[bold]Headroom: Session Compression[/bold]", border_style="yellow")
+                         title=title, border_style="yellow")
         return Panel(Text("NOT RUNNING\n\nStart: headroom proxy --port 8787", style="yellow"),
-                     title="[bold]Headroom: Session Compression[/bold]", border_style="yellow")
+                     title=title, border_style="yellow")
 
-    t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_column("k", style="dim", width=16)
-    t.add_column("v")
+    t = Table(show_header=False, box=None, padding=(0, 1 if narrow else 2))
+    t.add_column("k", style="dim", width=12 if narrow else 16, no_wrap=True)
+    t.add_column("v", no_wrap=True, overflow="ellipsis")
 
     ver = get_headroom_version() or "?"
     t.add_row("Status", f"[green]LIVE on :8787[/green] (v{ver})")
 
     comp = stats.get("summary", {}).get("compression", {})
-    t.add_row("Compressed", f"[cyan]{fmt(comp.get('total_tokens_removed', 0))}[/cyan] ({comp.get('avg_compression_pct', 0):.1f}% avg)")
+    t.add_row("Compressed", f"[cyan]{fmt(comp.get('total_tokens_removed', 0))}[/cyan] ({comp.get('avg_compression_pct', 0):.1f}%)")
 
     cache = stats.get("prefix_cache", {}).get("totals", {})
     rate = cache.get("hit_rate", 0)
     rate = rate / 100 if rate > 1 else rate
-    t.add_row("Prefix cache", f"{rate:.0%} hit ({fmt(cache.get('cache_read_tokens', 0))} reads, ${cache.get('savings_usd', 0):.2f})")
-    t.add_row("", "[dim]Anthropic-side cache; Headroom keeps prefix stable for hits[/dim]")
+    if narrow:
+        t.add_row("Cache", f"{rate:.0%} hit, ${cache.get('savings_usd', 0):.2f}")
+    else:
+        t.add_row("Prefix cache", f"{rate:.0%} hit ({fmt(cache.get('cache_read_tokens', 0))} reads, ${cache.get('savings_usd', 0):.2f})")
+        t.add_row("", "[dim]Anthropic-side cache; Headroom keeps prefix stable for hits[/dim]")
 
     overhead = stats.get("overhead", {})
     t.add_row("Overhead", f"{overhead.get('average_ms', 0):.0f}ms avg")
@@ -208,9 +215,12 @@ def build_headroom_panel(stats):
             short = model.replace("claude-", "")
             for sfx in ["-20250514", "-20250929", "-20251001", "-20251101", "-20260101"]:
                 short = short.replace(sfx, "")
-            t.add_row(f"  {short}", f"{fmt(d.get('tokens_sent', 0)):>7} sent {fmt(d.get('tokens_saved', 0)):>7} saved {d.get('reduction_pct', 0):>5.1f}% ({d.get('requests', 0)})")
+            if narrow:
+                t.add_row(f"  {short[:10]}", f"{fmt(d.get('tokens_saved', 0))} saved {d.get('reduction_pct', 0):.0f}%")
+            else:
+                t.add_row(f"  {short}", f"{fmt(d.get('tokens_sent', 0)):>7} sent {fmt(d.get('tokens_saved', 0)):>7} saved {d.get('reduction_pct', 0):>5.1f}% ({d.get('requests', 0)})")
 
-    return Panel(t, title="[bold]Headroom: Session Compression[/bold]", border_style="blue")
+    return Panel(t, title=title, border_style="blue")
 
 
 def build_footer(rtk, hr):
@@ -233,7 +243,7 @@ def build_footer(rtk, hr):
     return Panel(text, border_style="bright_white")
 
 
-def build_recent_panel(stats):
+def build_recent_panel(stats, narrow=False):
     # Read from log file (same as Tower) — no 10-entry API limit
     log_recent = fetch_recent_from_log(MAX_RECENT)
 
@@ -256,15 +266,23 @@ def build_recent_panel(stats):
         return Panel(Text("No traffic yet", style="dim"), title="[bold]Recent Requests[/bold]", border_style="dim")
 
     t = Table(box=None, padding=(0, 1), expand=True)
-    t.add_column("time", style="dim", width=8)
-    t.add_column("model", width=14)
-    t.add_column("before", justify="right", width=8)
-    t.add_column("after", justify="right", width=8)
-    t.add_column("saved", justify="right", width=8)
-    t.add_column("pct", justify="right", width=5)
-    t.add_column("transforms", width=30)
+    if narrow:
+        # Compact: time, model (short), saved, pct — skip before/after/transforms
+        t.add_column("time", style="dim", width=5, no_wrap=True)
+        t.add_column("model", width=10, no_wrap=True, overflow="ellipsis")
+        t.add_column("saved", justify="right", width=7, no_wrap=True)
+        t.add_column("pct", justify="right", width=4, no_wrap=True)
+    else:
+        t.add_column("time", style="dim", width=8, no_wrap=True)
+        t.add_column("model", width=14, no_wrap=True, overflow="ellipsis")
+        t.add_column("before", justify="right", width=8, no_wrap=True)
+        t.add_column("after", justify="right", width=8, no_wrap=True)
+        t.add_column("saved", justify="right", width=8, no_wrap=True)
+        t.add_column("pct", justify="right", width=5, no_wrap=True)
+        t.add_column("transforms", no_wrap=True, overflow="ellipsis")
 
-    for r in reversed(log_recent):
+    limit = 15 if narrow else MAX_RECENT
+    for r in reversed(log_recent[-limit:]):
         model = r["model"].replace("claude-", "")
         for sfx in ["-20250514", "-20250929", "-20251001", "-20251101", "-20260101"]:
             model = model.replace(sfx, "")
@@ -279,46 +297,67 @@ def build_recent_panel(stats):
         else:
             pct_style = "dim"
 
-        transforms = r["transforms"][:35]
-
-        t.add_row(
-            r["ts"],
-            model,
-            fmt(r["before"]),
-            fmt(r["after"]),
-            fmt(r["saved"]),
-            Text(f"{pct:.0f}%", style=pct_style),
-            Text(transforms, style="dim"),
-        )
+        if narrow:
+            t.add_row(
+                r["ts"][-5:],  # HH:MM only
+                model[:10],
+                fmt(r["saved"]),
+                Text(f"{pct:.0f}%", style=pct_style),
+            )
+        else:
+            t.add_row(
+                r["ts"],
+                model,
+                fmt(r["before"]),
+                fmt(r["after"]),
+                fmt(r["saved"]),
+                Text(f"{pct:.0f}%", style=pct_style),
+                Text(r["transforms"][:35], style="dim"),
+            )
 
     footer = Text()
     footer.append(f"  {len(log_recent)} entries", style="dim")
-    footer.append("  |  noop rows with after > before = proxy metadata overhead (~0.3%)", style="dim")
+    if not narrow:
+        footer.append("  |  noop rows with after > before = proxy metadata overhead (~0.3%)", style="dim")
 
     content = Table(box=None, padding=0, expand=True)
     content.add_column(ratio=1)
     content.add_row(t)
     content.add_row(footer)
 
-    return Panel(content, title=f"[bold]Recent Requests[/bold]", border_style="cyan")
+    return Panel(content, title="[bold]Recent Requests[/bold]", border_style="cyan")
 
 
 def build_layout(rtk, hr):
+    narrow = console.width < NARROW_THRESHOLD
     layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=1),
-        Layout(name="main"),
-        Layout(name="footer", size=4),
-    )
+
+    if narrow:
+        # Stacked vertical layout for half-screen / small terminals
+        layout.split_column(
+            Layout(name="header", size=1),
+            Layout(build_rtk_panel(rtk, narrow=True), name="rtk", ratio=1),
+            Layout(build_headroom_panel(hr, narrow=True), name="headroom", ratio=1),
+            Layout(build_recent_panel(hr, narrow=True), name="recent", ratio=1),
+            Layout(name="footer", size=3),
+        )
+    else:
+        # Side-by-side layout for wide terminals
+        layout.split_column(
+            Layout(name="header", size=1),
+            Layout(name="main"),
+            Layout(name="footer", size=4),
+        )
+        layout["main"].split_row(
+            Layout(name="stats", ratio=1),
+            Layout(build_recent_panel(hr, narrow=False), name="recent", ratio=1),
+        )
+        layout["stats"].split_column(
+            Layout(build_rtk_panel(rtk, narrow=False), name="rtk"),
+            Layout(build_headroom_panel(hr, narrow=False), name="headroom"),
+        )
+
     layout["header"].update(Text(" TOKEN SAVINGS MONITOR", style="bold white on dark_green", justify="center"))
-    layout["main"].split_row(
-        Layout(name="stats", ratio=1),
-        Layout(build_recent_panel(hr), name="recent", ratio=1),
-    )
-    layout["stats"].split_column(
-        Layout(build_rtk_panel(rtk), name="rtk"),
-        Layout(build_headroom_panel(hr), name="headroom"),
-    )
     layout["footer"].update(build_footer(rtk, hr))
     return layout
 
