@@ -57,8 +57,8 @@ fi
 # Map short names to pinned checkpoints. Set to "latest" to let Claude
 # Code resolve to its current default for that tier.
 # Swap these when a new checkpoint drops — one place, all pilots.
-MODEL_SONNET="claude-sonnet-4-5-20250929"
-MODEL_OPUS="claude-opus-4-5-20251101"
+MODEL_SONNET="claude-sonnet-4-20250514"
+MODEL_OPUS="claude-opus-4-1-20250805"
 MODEL_HAIKU="latest"
 
 # Validate & resolve
@@ -160,6 +160,11 @@ YOUR JOB:
 - Read and understand the codebase in your worktree
 - Before implementing any new function, use find_symbol to check if it already exists. Do not duplicate existing implementations.
 - Track progress in .sortie/progress.md
+
+## Git Push Rule
+ALWAYS push with -u to set upstream tracking:
+  git push -u origin <branch-name>
+NEVER use bare 'git push' without -u on the first push. This sets the upstream so subsequent pushes, pulls, and PR creation work without extra flags.
 
 NOT YOUR JOB (redirect to Mini Boss or Air Boss):
 - Deploying other agents or managing other pilots
