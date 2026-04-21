@@ -216,7 +216,14 @@ def _read_agent(sortie_dir: Path, worktree_path: Path,
 
     title = _extract_field(directive, "Title")
     if title == "Unknown":
-        title = ticket_id  # Use ticket as title fallback
+        # Fall back to first H1 heading (e.g. "# SPEC: iTerm Pane Isolation — ...")
+        h1_match = re.search(r"^#\s+(.+)$", directive, re.MULTILINE)
+        if h1_match:
+            # Strip leading "SPEC: " prefix if present
+            h1_title = h1_match.group(1).strip()
+            title = re.sub(r"^SPEC:\s*", "", h1_title)
+        else:
+            title = ticket_id  # Use ticket as title fallback
 
     return AgentState(
         ticket_id=ticket_id,
