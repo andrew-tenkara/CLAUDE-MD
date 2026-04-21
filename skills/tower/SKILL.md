@@ -156,6 +156,48 @@ bash ~/.claude/skills/tower/scripts/xo-tools.sh <command> [args...]
 | `tail-agent <ticket>` | Tail agent's JSONL stream |
 | `token-savings` | RTK + Headroom savings report |
 
+## Mission Board — Column Reference
+
+The agent board table has 7 columns. If data looks wrong, use this map to find the right file to edit.
+
+| # | Column | What it shows | Data source |
+|---|--------|--------------|-------------|
+| 0 | **CALLSIGN** | Agent name + mood indicator | `pilot.callsign`, `pilot.mood` |
+| 1 | **MISSION** | Ticket ID · title · current phase | `pilot.ticket_id`, `pilot.mission_title`, `pilot.flight_phase` |
+| 2 | **MODEL** | Model name; server URL on 2nd line when running | `pilot.model`, `pilot.status_hint` (shown if contains `localhost:` or `127.0.0.1:`) |
+| 3 | **STATUS** | Status icon + label | `pilot.status` via `STATUS_ICONS` / `STATUS_COLORS` |
+| 4 | **FUEL** | Token budget gauge, blinks red below 30% | `pilot.fuel_pct` |
+| 5 | **TIME** | Elapsed since launch | `pilot.launched_at` |
+| 6 | **TOOLS** | Tool calls (tx) · errors (✗ red) | `pilot.tool_calls`, `pilot.error_count` |
+
+### Fixing display issues
+
+**Mission title looks wrong or truncated**
+
+The title passes through two truncations:
+
+1. **On ingest** — `commands.py:258` — `ticket.title[:60]` (hard cap, stored on the pilot)
+2. **On display** — `widgets.py:739` — `clean_title[:50]` (display cap)
+
+To increase display length: raise the `[:50]` limit at `widgets.py:739`.
+To increase the stored cap: raise `[:60]` at `commands.py:258` and `642`.
+
+**Mission title has a double prefix (e.g. `[FOO-123] FOO-123: do thing`)**
+
+Strip logic lives at `widgets.py:741–742`. Two `.replace()` calls remove the `[TICKET-ID]` and `TICKET-ID:` prefixes before display.
+
+**Title is correct in code but wrong in Linear**
+
+The title is pulled live from Linear on deploy — no cache. Edit the ticket directly in Linear and re-deploy; no code changes needed.
+
+**Server URL not showing under model**
+
+`status_hint` must contain `localhost:` or `127.0.0.1:`. The agent writes this to its flight-status file. Check `pilot.status_hint` via `xo-tools.sh board-json`.
+
+**To reword these column descriptions**
+
+Edit this section of `SKILL.md`. The inline code comment at `widgets.py:684` mirrors it — update both if you change the descriptions.
+
 ## Mini Boss
 
 Mini Boss (Opus) spawns automatically on launch in the first Pit Boss pane. It assesses open worktrees and Linear status on startup. Talk to it directly in its iTerm2 pane for:

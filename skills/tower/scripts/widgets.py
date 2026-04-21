@@ -681,6 +681,17 @@ def refresh_board_table(ctx) -> None:
 
     ctx._sorted_pilots = sorted(pilots, key=_ticket_sort_key)
 
+    # ── Board column → data source map (see skills/tower/SKILL.md) ──────
+    # Col 0  CALLSIGN  pilot.callsign + pilot.mood (if not "steady")
+    # Col 1  MISSION   pilot.ticket_id / pilot.mission_title / pilot.flight_phase
+    # Col 2  MODEL     pilot.model; second line = pilot.status_hint when it
+    #                  contains "localhost:" or "127.0.0.1:" (server URL)
+    # Col 3  STATUS    STATUS_ICONS/STATUS_COLORS keyed on pilot.status
+    # Col 4  FUEL      pilot.fuel_pct via fuel_gauge(); blinks red below 30 %
+    # Col 5  TIME      seconds since pilot.launched_at via _format_elapsed()
+    # Col 6  TOOLS     pilot.tool_calls (tx) + pilot.error_count (✗, red)
+    # ────────────────────────────────────────────────────────────────────
+
     critical = []
     for pilot in ctx._sorted_pilots:
         icon = STATUS_ICONS.get(pilot.status, "?")
@@ -734,19 +745,22 @@ def refresh_board_table(ctx) -> None:
         if pilot.flight_phase:
             mission.append(f"\n\u00bb {pilot.flight_phase[:45]}", style="italic cyan")
             mission_lines += 1
-        if pilot.status_hint:
-            hint = pilot.status_hint
-            if "localhost:" in hint or "127.0.0.1:" in hint:
-                mission.append(f"\n\u26a1 {hint}", style="bold cyan")
-                mission_lines += 1
+
+        # Model — show server URL on second line when present
+        model = Text()
+        model.append(pilot.model, style="italic")
+        model_lines = 1
+        if pilot.status_hint and ("localhost:" in pilot.status_hint or "127.0.0.1:" in pilot.status_hint):
+            model.append(f"\n\u26a1 {pilot.status_hint}", style="bold cyan")
+            model_lines += 1
 
         # Dynamic row height — minimum 2, grows with content
-        row_height = max(2, mission_lines)
+        row_height = max(2, mission_lines, model_lines)
 
         table.add_row(
             cs,
             mission,
-            Text(pilot.model, style="italic"),
+            model,
             status,
             bar,
             Text(time_str, style="grey70"),
