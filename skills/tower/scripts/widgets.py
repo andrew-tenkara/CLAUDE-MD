@@ -746,13 +746,15 @@ def refresh_board_table(ctx) -> None:
             mission.append(f"\n\u00bb {pilot.flight_phase[:45]}", style="italic cyan")
             mission_lines += 1
 
-        # Model — show server URL on second line when present
+        # Model cell — show server URL if present, otherwise fall back to model name
         model = Text()
-        model.append(pilot.model, style="italic")
         model_lines = 1
         if pilot.status_hint and ("localhost:" in pilot.status_hint or "127.0.0.1:" in pilot.status_hint):
-            model.append(f"\n\u26a1 {pilot.status_hint}", style="bold cyan")
-            model_lines += 1
+            model.append(f"\u26a1 {pilot.status_hint}", style="bold cyan")
+        else:
+            import re as _re
+            model_label = _re.sub(r"-\d{8}$", "", pilot.model or "")
+            model.append(model_label, style="italic")
 
         # Dynamic row height — minimum 2, grows with content
         row_height = max(2, mission_lines, model_lines)
