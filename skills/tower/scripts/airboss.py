@@ -5,6 +5,7 @@ status updates, sitrep building, and iTerm2 pane management.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -76,6 +77,22 @@ class AirBoss:
         state_dir = Path("/tmp/uss-tenkara/_prifly")
         state_dir.mkdir(parents=True, exist_ok=True)
 
+        # Generate scoped MCP config for XO — linear + exa only.
+        # --strict-mcp-config prevents all other global MCPs from injecting tool schemas.
+        xo_mcp = state_dir / "xo-mcp.json"
+        _proj_mcp = Path(ctx._project_dir) / ".mcp.json"
+        _glob_mcp = Path.home() / ".claude.json"
+        _proj_servers = json.loads(_proj_mcp.read_text()).get("mcpServers", {}) if _proj_mcp.exists() else {}
+        _glob_servers = json.loads(_glob_mcp.read_text()).get("mcpServers", {}) if _glob_mcp.exists() else {}
+        _xo_allow = ["linear", "exa"]
+        _xo_out: dict = {"mcpServers": {}}
+        for _n in _xo_allow:
+            if _n in _proj_servers:
+                _xo_out["mcpServers"][_n] = _proj_servers[_n]
+            elif _n in _glob_servers:
+                _xo_out["mcpServers"][_n] = _glob_servers[_n]
+        xo_mcp.write_text(json.dumps(_xo_out, indent=2))
+
         directive_file = state_dir / "miniboss-directive.md"
         directive_file.write_text(kickoff)
 
@@ -111,6 +128,7 @@ class AirBoss:
             f"fi\n"
             f"\n"
             f"claude --model opus "
+            f"--strict-mcp-config --mcp-config '{xo_mcp}' "
             f"--allowedTools 'Read' "
             f"--allowedTools 'Write(**.sortie/**)' "
             f"--allowedTools 'Write(**/.claude/worktrees/**)' "
@@ -229,16 +247,30 @@ class AirBoss:
         """No-op — Mini Boss is now an interactive Claude session, not stream-json."""
         pass
 
+    def _available_extra_mcps_text(self) -> str:
+        """Return a formatted string of MCP servers available to grant to pilots (beyond base set)."""
+        try:
+            base = {"serena", "CodeGraphContext", "exa"}
+            proj_mcp = Path(self.ctx._project_dir) / ".mcp.json"
+            glob_mcp = Path.home() / ".claude.json"
+            proj_servers = json.loads(proj_mcp.read_text()).get("mcpServers", {}) if proj_mcp.exists() else {}
+            glob_servers = json.loads(glob_mcp.read_text()).get("mcpServers", {}) if glob_mcp.exists() else {}
+            extras = sorted((set(proj_servers) | set(glob_servers)) - base)
+            if extras:
+                return f"Available extras you can grant via --mcp-extra: {', '.join(extras)}\n"
+            return "No extra MCPs configured in project .mcp.json or ~/.claude.json beyond base set.\n"
+        except Exception:
+            return ""
+
     def _db_health(self) -> str:
         """Run storage-db health-check and return a formatted string for the kickoff prompt."""
-        import json as _json
         storage_db = Path(__file__).resolve().parent / "storage-db.py"
         try:
             result = subprocess.run(
                 ["python3", str(storage_db), "health-check", self.ctx._project_dir],
                 capture_output=True, text=True, timeout=10,
             )
-            h = _json.loads(result.stdout)
+            h = json.loads(result.stdout)
             lines = [f"DB: {h['db_size_mb']}MB | " + " | ".join(
                 f"{t}: {v['rows']}" for t, v in h["tables"].items()
             )]
@@ -417,6 +449,22 @@ class AirBoss:
             "The script handles: worktree creation, .sortie/ protocol files, env setup, "
             "dep install, and launching Claude in the Pit Boss iTerm window.\n"
             "The agent will appear on the Pri-Fly dashboard automatically.\n\n"
+            "GRANTING EXTRA MCPs TO PILOTS:\n"
+            "Pilots get a base MCP set (serena, CodeGraphContext, exa, vercel) by default. "
+            "For tickets that need additional tools, pass --mcp-extra with a comma-separated list:\n"
+            f"  bash '{deploy_script}' ENG-301 --model sonnet --mcp-extra supabase "
+            f"--directive '...' --project-dir '{ctx._project_dir}'\n"
+            f"  bash '{deploy_script}' ENG-302 --model sonnet --mcp-extra supabase,railway "
+            f"--directive '...' --project-dir '{ctx._project_dir}'\n"
+            "\n"
+            "When to grant extras:\n"
+            "  - DB bug / schema change / migrations / RLS → supabase\n"
+            "  - Redis queue bug / infra config / deployment → railway\n"
+            "  - Ticket needs to query or update Linear itself → linear\n"
+            "  - Any ticket that clearly needs a specific external service the base set lacks\n"
+            "\n"
+            + self._available_extra_mcps_text()
+            + "\n"
             "MISSION QUEUE:\n"
             "You manage the mission queue by writing JSON files to the project's "
             f".sortie/mission-queue/ directory ({ctx._project_dir}/.sortie/mission-queue/).\n"

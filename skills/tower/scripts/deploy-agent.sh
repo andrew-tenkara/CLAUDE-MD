@@ -2,7 +2,7 @@
 # deploy-agent.sh — Deploy a sortie agent to a worktree
 #
 # Usage:
-#   deploy-agent.sh <ticket-id> [--model sonnet|opus|haiku] [--directive "text"]
+#   deploy-agent.sh <ticket-id> [--model sonnet|opus|haiku] [--directive "text"] [--with-browser] [--mcp-extra name1,name2]
 #
 # This script:
 #   1. Creates a git worktree (or reuses existing)
@@ -29,6 +29,8 @@ PROJECT_DIR=""
 BRANCH_OVERRIDE=""
 BASE_BRANCH="dev"
 NO_LAUNCH=false
+WITH_BROWSER=false
+MCP_EXTRAS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -38,6 +40,8 @@ while [[ $# -gt 0 ]]; do
     --branch)      BRANCH_OVERRIDE="$2"; shift 2 ;;
     --base)        BASE_BRANCH="$2"; shift 2 ;;
     --no-launch)   NO_LAUNCH=true; shift ;;
+    --with-browser) WITH_BROWSER=true; shift ;;
+    --mcp-extra)   MCP_EXTRAS="${MCP_EXTRAS:+$MCP_EXTRAS,}$2"; shift 2 ;;
     -*)            echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
@@ -360,6 +364,35 @@ if [ -x "${SORTIE_SCRIPTS}/write-settings.sh" ]; then
   bash "${SORTIE_SCRIPTS}/write-settings.sh" "$BRANCH_NAME" "$WORKTREE_PATH" "$PROJECT_DIR" 2>/dev/null || true
 fi
 
+# ── Generate scoped MCP config for pilot ────────────────────────────
+# Whitelist approach: pilots get only the MCPs they need, not the full global set.
+# Saves ~20-40K tokens of tool definitions at startup.
+PILOT_MCP="${SORTIE_DIR}/pilot-mcp.json"
+WITH_BROWSER="${WITH_BROWSER}" MCP_EXTRAS="${MCP_EXTRAS}" PROJECT_DIR="${PROJECT_DIR}" PILOT_MCP="${PILOT_MCP}" python3 - <<'PYEOF' || echo "MCP:WARNING — pilot-mcp.json generation failed" >&2
+import json, os
+proj_path = os.path.join(os.environ["PROJECT_DIR"], ".mcp.json")
+glob_path = os.path.expanduser("~/.claude.json")
+proj = json.load(open(proj_path)) if os.path.exists(proj_path) else {}
+glob = json.load(open(glob_path)) if os.path.exists(glob_path) else {}
+proj_servers = proj.get("mcpServers", {})
+glob_servers = glob.get("mcpServers", {})
+allow = ["serena", "CodeGraphContext", "exa"]
+if os.environ.get("WITH_BROWSER") == "true":
+    allow += ["playwright", "stagehand-local"]
+extras_str = os.environ.get("MCP_EXTRAS", "").strip()
+if extras_str:
+    extras = [x.strip() for x in extras_str.split(",") if x.strip()]
+    allow += [e for e in extras if e not in allow]
+out = {"mcpServers": {}}
+for name in allow:
+    if name in proj_servers:
+        out["mcpServers"][name] = proj_servers[name]
+    elif name in glob_servers:
+        out["mcpServers"][name] = glob_servers[name]
+json.dump(out, open(os.environ["PILOT_MCP"], "w"), indent=2)
+print(f"MCP:scoped to {len(out['mcpServers'])} servers: {','.join(out['mcpServers'].keys())}")
+PYEOF
+
 # ── Build disallowed tools list ──────────────────────────────────────
 # Centralized list file takes precedence over inline fallback
 DISALLOWED_FILE="${SCRIPT_DIR}/disallowed-tools.txt"
@@ -389,7 +422,7 @@ cleanup_flight() {
 }
 trap cleanup_flight EXIT
 
-claude --model ${RESOLVED_MODEL} '${KICKOFF}' --disallowedTools ${DISALLOWED}
+claude --model ${RESOLVED_MODEL} '${KICKOFF}' --strict-mcp-config --mcp-config '${PILOT_MCP}' --disallowedTools ${DISALLOWED}
 LAUNCH_EOF2
 chmod +x "${LAUNCH_SCRIPT}"
 

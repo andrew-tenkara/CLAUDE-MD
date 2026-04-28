@@ -37,10 +37,16 @@ DISALLOWED="'Bash(git push --force*)' 'Bash(git push -f *)' 'Bash(git push *--fo
 KICKOFF="Read ${WORKTREE_PATH}/.sortie/directive.md and follow all instructions. Track progress in ${WORKTREE_PATH}/.sortie/progress.md"
 LAUNCH_SCRIPT="${WORKTREE_PATH}/.sortie/launch.sh"
 
+PILOT_MCP="${WORKTREE_PATH}/.sortie/pilot-mcp.json"
+MCP_FLAGS=""
+if [ -f "$PILOT_MCP" ]; then
+  MCP_FLAGS="--strict-mcp-config --mcp-config '${PILOT_MCP}'"
+fi
+
 cat > "${LAUNCH_SCRIPT}" << LAUNCH_EOF
 #!/usr/bin/env bash
 cd '${WORKTREE_PATH}'
-exec claude --model ${MODEL} '${KICKOFF}' --disallowedTools ${DISALLOWED}
+exec claude --model ${MODEL} '${KICKOFF}' ${MCP_FLAGS} --disallowedTools ${DISALLOWED}
 LAUNCH_EOF
 chmod +x "${LAUNCH_SCRIPT}"
 
