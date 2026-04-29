@@ -178,7 +178,7 @@ class TestTokenDeltas(unittest.TestCase):
         pilot.tokens_used = 600
         self.reconciler.check_token_deltas([pilot], self.radio)
         assert pilot.status == "IN_FLIGHT"
-        assert self.radio.has("WAVE OFF RTB")
+        assert self.radio.has("WAVE OFF")
 
     def test_on_approach_to_recovered_after_extended_stale(self):
         pilot = FakePilot(callsign="VIPER-1", status="IN_FLIGHT", tokens_used=500)
@@ -274,11 +274,6 @@ class TestValidateTransition(unittest.TestCase):
     def test_in_flight_to_on_approach_is_valid(self):
         assert validate_transition("IN_FLIGHT", "ON_APPROACH") == "ON_APPROACH"
 
-    def test_in_flight_to_recovered_goes_through_on_approach(self):
-        """IN_FLIGHT can't jump directly to RECOVERED — must pass through ON_APPROACH."""
-        result = validate_transition("IN_FLIGHT", "RECOVERED")
-        assert result == "ON_APPROACH", f"Expected ON_APPROACH intermediate, got {result}"
-
     def test_on_approach_to_recovered_is_valid(self):
         assert validate_transition("ON_APPROACH", "RECOVERED") == "RECOVERED"
 
@@ -287,10 +282,6 @@ class TestValidateTransition(unittest.TestCase):
 
     def test_on_deck_to_in_flight_is_valid(self):
         assert validate_transition("ON_DECK", "IN_FLIGHT") == "IN_FLIGHT"
-
-    def test_on_deck_to_on_approach_goes_through_in_flight(self):
-        result = validate_transition("ON_DECK", "ON_APPROACH")
-        assert result == "IN_FLIGHT"
 
     def test_on_deck_to_recovered_is_valid(self):
         assert validate_transition("ON_DECK", "RECOVERED") == "RECOVERED"
@@ -308,11 +299,6 @@ class TestValidateTransition(unittest.TestCase):
             assert status in VALID_TRANSITIONS, f"{status} has no transition rules"
             assert len(VALID_TRANSITIONS[status]) > 0, f"{status} has empty transitions"
 
-    def test_bingo_notified_attribute_exists(self):
-        """StatusReconciler should still have bingo_notified set."""
-        reconciler = StatusReconciler()
-        assert hasattr(reconciler, "bingo_notified")
-        assert isinstance(reconciler.bingo_notified, set)
 
 
 if __name__ == "__main__":

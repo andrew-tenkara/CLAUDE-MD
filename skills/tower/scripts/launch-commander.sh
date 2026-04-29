@@ -43,12 +43,6 @@ python3 -c "import textual; import watchdog" 2>/dev/null || pip3 install -q text
 # Preflight — patch existing worktrees with .claudeignore / .mcp.json
 bash "${SCRIPT_DIR}/preflight-worktrees.sh" "$PROJECT_DIR" 2>&1 | while IFS= read -r line; do echo "$line"; done
 
-# ── Headroom proxy — kill stale so SessionStart hook gets a fresh instance ──
-STALE_PID=$(pgrep -f "headroom proxy" | head -1)
-if [ -n "$STALE_PID" ]; then
-  kill "$STALE_PID" 2>/dev/null || true
-  sleep 1  # Let port release before hook restarts it
-fi
 
 # State dir for IPC
 STATE_DIR="/tmp/uss-tenkara/_prifly"
@@ -58,8 +52,10 @@ rm -f "$STATE_DIR"/agents_window_id "$STATE_DIR"/agents_last_session_id
 # Build the command to run inside the TUI window
 CMD="python3 '${DASHBOARD}' --project-dir '${PROJECT_DIR}'"
 
-# Create TUI window + Pit Boss window, save Pit Boss window/session IDs
-RESULT=$(osascript <<EOF
+# Run iTerm2 setup fully detached to avoid disrupting Headroom proxy connections.
+# The osascript writes state files directly instead of returning values.
+(
+osascript <<EOF
 tell application "iTerm2"
   activate
 
@@ -78,26 +74,21 @@ tell application "iTerm2"
     write text "echo '⚓ USS TENKARA — PIT BOSS'; echo 'Mini Boss + agent panes will appear here.'; echo ''"
   end tell
 
+  -- Write state files directly (detached execution can't return values to shell)
+  do shell script "echo " & (id of pitBossWindow as text) & " > ${STATE_DIR}/agents_window_id"
+  do shell script "echo " & (unique id of pitBossSess) & " > ${STATE_DIR}/agents_last_session_id"
+  do shell script "echo " & (id of pitBossWindow as text) & " > ${STATE_DIR}/window_id"
+  do shell script "echo running > ${STATE_DIR}/tower_running"
+
   -- Small delay to ensure sessions are ready, then write TUI command
   delay 0.3
   tell tuiSess
     write text "${CMD}"
   end tell
-
-  return (id of pitBossWindow as text) & "," & (unique id of pitBossSess)
 end tell
 EOF
-)
+) &
+disown
 
-PB_WINDOW_ID=$(echo "$RESULT" | cut -d',' -f1)
-PB_SESSION_ID=$(echo "$RESULT" | cut -d',' -f2)
-
-echo "$PB_WINDOW_ID" > "$STATE_DIR/agents_window_id"
-echo "$PB_SESSION_ID" > "$STATE_DIR/agents_last_session_id"
-
-# Marker files for Tower detection (XO and scripts check these)
-echo "$PB_WINDOW_ID" > "$STATE_DIR/window_id"
-echo "running" > "$STATE_DIR/tower_running"
-
-echo "Pri-Fly commander launched in new iTerm2 window"
+echo "Pri-Fly commander launching in new iTerm2 window..."
 echo "Pit Boss window ready for agent panes"

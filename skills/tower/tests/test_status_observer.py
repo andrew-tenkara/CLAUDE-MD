@@ -13,18 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from status_observer import (
     derive_status,
     _has_session_ended,
-    _has_write_tools,
-    _has_any_tools,
     _read_command_override,
 )
 
-# Helper: mock the internal evidence functions instead of the lazy imports
-def _patch_evidence(jsonl_age=None, events=None):
-    """Patch _jsonl_age and _tail_jsonl_events for testing."""
-    return (
-        patch("status_observer._jsonl_age", return_value=jsonl_age),
-        patch("status_observer._tail_jsonl_events", return_value=events or []),
-    )
+# Helper: mock the internal evidence function
+def _patch_jsonl_age(jsonl_age=None):
+    """Patch _jsonl_age for testing."""
+    return patch("status_observer._jsonl_age", return_value=jsonl_age)
 
 
 class TestDeriveStatus(unittest.TestCase):
@@ -54,64 +49,35 @@ class TestDeriveStatus(unittest.TestCase):
         assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
     def test_no_jsonl_returns_on_deck(self):
-        p1, p2 = _patch_evidence(jsonl_age=None)
-        with p1, p2:
+        """No JSONL file → ON_DECK."""
+        with _patch_jsonl_age(None):
             assert derive_status(self.tmpdir) == "ON_DECK"
 
     def test_fresh_jsonl_returns_in_flight(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Edit", "input": {}}
-        ]}}]
-        p1, p2 = _patch_evidence(jsonl_age=5.0, events=events)
-        with p1, p2:
-            assert derive_status(self.tmpdir) == "IN_FLIGHT"
-
-    def test_fresh_jsonl_with_read_tools_returns_in_flight(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {}}
-        ]}}]
-        p1, p2 = _patch_evidence(jsonl_age=5.0, events=events)
-        with p1, p2:
+        """Fresh JSONL (5s) → IN_FLIGHT."""
+        with _patch_jsonl_age(5.0):
             assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
     def test_warm_jsonl_in_flight_goes_on_approach(self):
-        """JSONL 60s old, was IN_FLIGHT → ON_APPROACH."""
-        p1, p2 = _patch_evidence(jsonl_age=60.0)
-        with p1, p2:
+        """JSONL 60s old, was IN_FLIGHT → ON_APPROACH (past hysteresis window)."""
+        with _patch_jsonl_age(60.0):
             assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "ON_APPROACH"
 
     def test_stale_jsonl_on_deck_stays_on_deck(self):
         """JSONL 300s old, was ON_DECK → stays ON_DECK."""
-        p1, p2 = _patch_evidence(jsonl_age=300.0)
-        with p1, p2:
+        with _patch_jsonl_age(300.0):
             assert derive_status(self.tmpdir, current_status="ON_DECK") == "ON_DECK"
 
-    def test_in_flight_stays_during_thinking(self):
-        """Agent IN_FLIGHT, JSONL fresh, last events are text only → stay IN_FLIGHT."""
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "Let me think about this..."}
-        ]}}]
-        p1, p2 = _patch_evidence(jsonl_age=3.0, events=events)
-        with p1, p2:
+    def test_hysteresis_in_flight_stays_longer(self):
+        """IN_FLIGHT uses JSONL_FRESH_STAY (25s) window, ON_DECK uses JSONL_FRESH_ENTER (10s)."""
+        with _patch_jsonl_age(15.0):
+            # 15s is stale for entering (>10s) but fresh for staying (<25s)
+            assert derive_status(self.tmpdir, current_status="") == "ON_DECK"
             assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "IN_FLIGHT"
 
     def test_session_ended_from_in_flight(self):
         (self.sortie / "session-ended").touch()
         assert derive_status(self.tmpdir, current_status="IN_FLIGHT") == "RECOVERED"
-
-    def test_fresh_jsonl_with_mixed_tools_returns_in_flight(self):
-        """Write tool present among reads → IN_FLIGHT."""
-        events = [
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Read", "input": {}}
-            ]}},
-            {"type": "assistant", "message": {"content": [
-                {"type": "tool_use", "name": "Edit", "input": {}}
-            ]}},
-        ]
-        p1, p2 = _patch_evidence(jsonl_age=2.0, events=events)
-        with p1, p2:
-            assert derive_status(self.tmpdir) == "IN_FLIGHT"
 
 
 class TestEvidenceReaders(unittest.TestCase):
@@ -126,30 +92,6 @@ class TestEvidenceReaders(unittest.TestCase):
         d = tempfile.mkdtemp()
         Path(d, ".sortie").mkdir()
         assert _has_session_ended(d) is False
-
-    def test_has_write_tools_true(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Edit", "input": {}}
-        ]}}]
-        assert _has_write_tools(events) is True
-
-    def test_has_write_tools_false(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Read", "input": {}}
-        ]}}]
-        assert _has_write_tools(events) is False
-
-    def test_has_any_tools_true(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "tool_use", "name": "Grep", "input": {}}
-        ]}}]
-        assert _has_any_tools(events) is True
-
-    def test_has_any_tools_false(self):
-        events = [{"type": "assistant", "message": {"content": [
-            {"type": "text", "text": "thinking"}
-        ]}}]
-        assert _has_any_tools(events) is False
 
     def test_command_override_reads_and_deletes(self):
         d = tempfile.mkdtemp()

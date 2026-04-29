@@ -291,7 +291,6 @@ class PriFlyCommander(App):
         Binding("k", "compact_selected", "Compact", priority=True, show=False),
         Binding("v", "start_server", "DevServer", priority=True, show=False),
         Binding("m", "relaunch_miniboss", "Mini Boss", priority=True, show=False),
-        Binding("h", "headroom_monitor", "Headroom", priority=True, show=True),
         Binding("t", "open_terminal", "Terminal", priority=True, show=False),
         Binding("z", "dismiss_selected", "Dismiss", priority=True, show=False),
         Binding("s", "sync_worktrees", "Sync", priority=True, show=False),
@@ -347,7 +346,6 @@ class PriFlyCommander(App):
         self._legacy_agents: dict[str, AgentState] = {}  # ticket_id -> AgentState
         self._observer: Optional[Observer] = None
         self._watched_jsonl_dirs: set[str] = set()  # JSONL dirs already watched
-        self._rtk_active: bool = False
         self._sentinel_pid: Optional[int] = None
 
         # Inline sentinel — runs classification in-process instead of subprocess
@@ -467,8 +465,6 @@ class PriFlyCommander(App):
         self._init_airboss()
         self._spawn_airboss()
 
-        # Preflight: check RTK token optimizer
-        self._check_rtk()
 
         # Sync existing worktree agents on startup
         self._sync_legacy_agents()
@@ -710,8 +706,6 @@ class PriFlyCommander(App):
 
     # ── Air Boss (delegated to scripts/airboss.py) ─────────────────────
 
-    def _check_rtk(self) -> None:
-        self._airboss.check_rtk()
 
     def _init_airboss(self) -> None:
         self._airboss.init_header()
@@ -864,15 +858,11 @@ class PriFlyCommander(App):
         self._iterm_pane_cmd("TERMINAL", f"cd '{target}'")
         self._add_radio("PRI-FLY", label, "system")
 
-    def action_headroom_monitor(self) -> None:
-        monitor = Path(__file__).resolve().parent / "headroom-monitor.py"
-        self._iterm_pane_cmd("HEADROOM", f"python3 '{monitor}'")
-        self._add_radio("PRI-FLY", "Headroom monitor opened", "system")
 
     def action_relaunch_miniboss(self) -> None:
         if self._airboss_spawned and getattr(self, "_airboss_active", False):
-            self._add_radio("MINI BOSS", "Already active — close its pane first to relaunch", "error")
-            return
+            self._add_radio("MINI BOSS", "Killing active session for relaunch...", "system")
+            self._iterm_bridge.kill_pane("MINI-BOSS")
         self._airboss_spawned = False
         self._airboss_active = False
         self._iterm_panes.discard("MINI-BOSS")
@@ -1553,7 +1543,6 @@ class PriFlyCommander(App):
             _key("M", "Boss", "bold magenta")
             _key("S", "Sync")
             _sep()
-            _key("H", "Headroom", "bold cyan")
             _key("F", "Flight")
             _sep()
             _key("Q", "Quit")

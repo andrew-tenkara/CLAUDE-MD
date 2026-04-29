@@ -1,7 +1,7 @@
 """USS Tenkara PRI-FLY — Air Boss (Mini Boss) lifecycle.
 
-Manages the Mini Boss Opus orchestrator: RTK preflight check, spawn,
-status updates, sitrep building, and iTerm2 pane management.
+Manages the Mini Boss Opus orchestrator: spawn, status updates,
+sitrep building, and iTerm2 pane management.
 """
 from __future__ import annotations
 
@@ -28,22 +28,6 @@ class AirBoss:
 
     def __init__(self, ctx: "PriFlyCommander") -> None:
         self.ctx = ctx
-
-    def check_rtk(self) -> None:
-        """Preflight check: verify RTK token optimizer is installed and hooked."""
-        ctx = self.ctx
-        rtk_bin = shutil.which("rtk")
-        if not rtk_bin:
-            ctx._add_radio("PRI-FLY", "RTK not installed — agents burning raw tokens. Run: brew install rtk && rtk init -g", "error")
-            ctx._rtk_active = False
-            return
-        hook_path = Path.home() / ".claude" / "hooks" / "rtk-rewrite.sh"
-        if not hook_path.exists():
-            ctx._add_radio("PRI-FLY", "RTK installed but hook missing. Run: rtk init -g", "error")
-            ctx._rtk_active = False
-            return
-        ctx._rtk_active = True
-        ctx._add_radio("PRI-FLY", "RTK fuel optimizer online — extended range authorized", "system")
 
     def init_header(self) -> None:
         """Initialize the Air Boss header widget."""
@@ -149,11 +133,10 @@ class AirBoss:
             f"Then do these five things in order: "
             f"1) Run preflight check. "
             f"2) Check {ctx._project_dir}/.claude/worktrees/ for open agents. "
-            f"3) Call mcp__linear__list_issues to fetch all Todo and In Progress tickets assigned to me. "
-            f"4) Write each ticket as a JSON mission file to {ctx._project_dir}/.sortie/mission-queue/ using Bash (mkdir -p first). "
-            f"5) Introduce yourself to the Air Boss (your CO). Tell them who you are, what you can do for them, "
-            f"give a concise sitrep of flight deck state, and recommend the next action. "
-            f"Address them directly — they are reading your output in the Pit Boss pane. Start now.'\n"
+            f"3) Introduce yourself to the Air Boss (your CO). Tell them who you are, what you can do for them, "
+            f"give a concise sitrep of flight deck state (active worktrees, their status), and ask what they want to work on. "
+            f"Address them directly — they are reading your output in the Pit Boss pane. "
+            f"DO NOT auto-fetch Linear tickets or populate the mission queue — the Air Boss adds tickets via /tq. Start now.'\n"
         )
         launch_script.chmod(0o755)
 
@@ -485,9 +468,9 @@ class AirBoss:
             "}\n"
             "```\n"
             "Priority: 1=urgent, 2=normal, 3=low\n"
-            "On startup, fetch Linear tickets and write each to the mission-queue dir.\n"
             "To remove a mission from the queue, delete its file.\n"
-            "When the Air Boss deploys a mission, the dashboard removes it from the queue.\n\n"
+            "When the Air Boss deploys a mission, the dashboard removes it from the queue.\n"
+            "DO NOT auto-populate the queue — the Air Boss adds tickets via /tq.\n\n"
             "MANAGED SERVERS:\n"
             "When you spin up a dev server for a worktree, track it in the managed servers file:\n"
             f"  {ctx._project_dir}/.sortie/managed-servers.json\n"
@@ -561,7 +544,7 @@ class AirBoss:
             f"  bash '{Path(__file__).parent / 'xo-tools.sh'}' kick-sync                         — Force dashboard re-sync\n"
             f"  bash '{Path(__file__).parent / 'xo-tools.sh'}' queue-list                        — Show mission queue\n"
             f"  bash '{Path(__file__).parent / 'xo-tools.sh'}' queue-remove <ticket-id>          — Remove from queue\n"
-            f"  bash '{Path(__file__).parent / 'xo-tools.sh'}' token-savings                     — RTK + Headroom savings report\n\n"
+            "\n"
             "WHEN TO USE WHICH:\n"
             "- Agent stuck on board after session ended? → dismiss <ticket>\n"
             "- Agent in wrong status? → set-status <ticket> <correct-status>\n"
@@ -572,8 +555,7 @@ class AirBoss:
             "- Agent needs a different model for next run? → reassign-model <ticket> <model>\n"
             "- Need to redirect an agent without opening its pane? → inject <ticket> <message>\n"
             "- Something feels off? → health (full system diagnostic)\n"
-            "- Sentinel acting up? → sentinel-status\n"
-            "- Air Boss asks about token savings? → token-savings (shows RTK + Headroom stats)\n\n"
+            "- Sentinel acting up? → sentinel-status\n\n"
             "IMPORTANT: Prefer xo-tools.sh over writing raw JSON files. The tools validate input, "
             "handle edge cases, and trigger sync automatically.\n\n"
             "SORTIE LIFECYCLE — HOW AGENTS APPEAR AND DISAPPEAR:\n"
@@ -605,10 +587,12 @@ class AirBoss:
             "5. Use a trap to clean up on exit:\n"
             "   trap to remove the entry from managed-servers.json when the server stops\n\n"
             "TOWER QUEUE (/tq):\n"
-            "The Air Boss preps sorties via /tq <ticket> from any Claude session. This creates the "
-            "worktree and puts the pilot on deck as IDLE. The Air Boss then hits D or R in the TUI "
-            "to deploy. When you see a new worktree appear that you didn't deploy, it came from /tq.\n"
-            "Your role: check the directive, assess the model, update .sortie/model.txt if needed.\n\n"
+            "When the Air Boss says '/tq ENG-XXX' or 'queue ENG-XXX', run deploy-agent.sh:\n\n"
+            f"  bash '{Path(__file__).parent / 'deploy-agent.sh'}' <TICKET_ID> \\\n"
+            f"    --project-dir '{ctx._project_dir}' \\\n"
+            "    --model <model>  # optional: opus, sonnet, haiku\n\n"
+            "This creates the worktree and puts the pilot on deck. The Air Boss then hits D in the TUI to deploy.\n"
+            "DO NOT use storage-db.py for queueing — that's for messages and insights, not queue management.\n\n"
             "IMPORTANT — REINFORCE /tq CONSTANTLY:\n"
             "In EVERY sitrep, suggestion, and conversation, mention /tq. This is THE way to get "
             "pilots on deck. Build muscle memory through repetition. Examples:\n"
@@ -674,22 +658,12 @@ class AirBoss:
             "  1. Init the session storage DB (idempotent — safe to run every time):\n"
             f"     python3 '{Path(__file__).parent / 'storage-db.py'}' init '{ctx._project_dir}'\n"
             "     This creates .sortie/storage.db if it doesn't exist. Pilots write debriefs here.\n\n"
-            "  2. Headroom proxy is managed globally by ~/.claude/hooks/headroom-autostart.sh (SessionStart hook).\n"
-            "     Every Claude session auto-starts it. No manual check needed — just verify health if diagnostics warrant it.\n\n"
-            "  3. Show token savings baseline:\n"
-            f"     bash '{Path(__file__).parent / 'xo-tools.sh'}' token-savings\n"
-            "     Report the numbers to the Air Boss in your sitrep.\n\n"
-            "  4. Check Serena is per-worktree (not project-level):\n"
+            "  2. Check Serena is per-worktree (not project-level):\n"
             f"     Verify {ctx._project_dir}/.mcp.json does NOT have a 'serena' entry.\n"
             "     Each pilot's worktree has its own Serena pointed at that worktree path.\n\n"
             "STEP 1 — SITUATION AWARENESS:\n"
             "  Check open worktrees — what's in progress, anything stale?\n\n"
-            "STEP 2 — MISSION INTEL:\n"
-            "  Use mcp__linear__list_issues to fetch Todo/In Progress tickets assigned to me.\n\n"
-            "STEP 3 — POPULATE QUEUE:\n"
-            f"  Write each ticket as a JSON mission file to {ctx._project_dir}/.sortie/mission-queue/ "
-            "(mkdir -p first). This populates the dashboard's mission queue.\n\n"
-            "STEP 4 — SITREP:\n"
+            "STEP 2 — SITREP:\n"
             "  Give a brief sitrep — 5-10 lines max. End with a /tq suggestion: "
             "'/tq <ticket> to get the next one on deck.'"
         )

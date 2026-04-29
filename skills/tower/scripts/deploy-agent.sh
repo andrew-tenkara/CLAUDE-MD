@@ -144,6 +144,18 @@ echo "WORKTREE:${WORKTREE_PATH}"
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
 
+# Tell git to ignore local changes to CLAUDE.md (it's tracked but we modify it per-worktree)
+# --skip-worktree is the right flag for "I changed this locally, don't commit it"
+(cd "$WORKTREE_PATH" && git update-index --skip-worktree CLAUDE.md 2>/dev/null) || true
+
+# Exclude .sortie/ from git (untracked, so info/exclude works)
+if [ -f "${WORKTREE_PATH}/.git" ]; then
+  GIT_DIR=$(cat "${WORKTREE_PATH}/.git" | sed 's/gitdir: //')
+  EXCLUDE_FILE="${GIT_DIR}/info/exclude"
+  mkdir -p "$(dirname "$EXCLUDE_FILE")"
+  grep -q "^\.sortie/$" "$EXCLUDE_FILE" 2>/dev/null || echo ".sortie/" >> "$EXCLUDE_FILE"
+fi
+
 # ── Init storage DB + fetch briefing ─────────────────────────────────
 STORAGE_DB="${SCRIPT_DIR}/storage-db.py"
 python3 "$STORAGE_DB" init "$PROJECT_DIR" 2>/dev/null || true
@@ -152,141 +164,112 @@ if [ "$BRIEFING" = "BRIEFING:none" ]; then
   BRIEFING=""
 fi
 
-# Directive
-# NOTE: Static role content FIRST, dynamic ticket content LAST.
-# This keeps the cacheable prefix stable across turns (~30% better cache reuse).
+# Directive — slim version (role info is in CLAUDE.md)
 if [ -n "$DIRECTIVE" ]; then
-  cat > "${SORTIE_DIR}/directive.md" << DIRECTIVE_EOF
-## Role: PILOT (individual contributor)
-YOUR JOB:
-- Execute the directive below — implement, fix, test, PR
+  printf '%s\n' "# Mission Directive" "" "$DIRECTIVE" > "${SORTIE_DIR}/directive.md"
+fi
+
+# Write worktree CLAUDE.md — full operating manual (overwrites repo default with pilot-specific template)
+cat > "${WORKTREE_PATH}/CLAUDE.md" << CLAUDE_MD_EOF
+# Sortie Operating Manual
+
+## Who You Are
+You are a **PILOT** working ticket **${TICKET_ID}** in a dedicated git worktree.
+
+**Sortie** is the agent deployment system for USS Tenkara Tower — a TUI that orchestrates multiple Claude Code agents working in parallel on different tickets. Each pilot gets their own worktree, their own branch, and a shared SQLite message bus for coordination.
+
+| Path | What |
+|------|------|
+| **Worktree** | \`${WORKTREE_PATH}\` |
+| **Branch** | \`${BRANCH_NAME}\` |
+| **Project root** | \`${PROJECT_DIR}\` |
+| **Sortie state** | \`.sortie/\` (flight status, context, messages) |
+| **Sortie scripts** | \`${SCRIPT_DIR}/\` |
+
+**Key scripts you can use:**
+- \`storage-db.py\` — Message bus, insights, snapshots (see commands below)
+- \`compress-ticket.sh\` — Compact your context if running low on fuel
+
+Your worktree is independent — you can commit, push, and PR without affecting other pilots.
+
+## Your Mission
+Run this on startup to get your directive + prior intel:
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'
+\`\`\`
+
+## Your Job
+- Execute your directive — implement, fix, test, PR
 - Write code, run tests, commit changes, open PRs
-- Read and understand the codebase in your worktree
-- Before implementing any new function, use find_symbol to check if it already exists. Do not duplicate existing implementations.
-- Track progress in .sortie/progress.md
+- Before implementing any new function, use find_symbol to check if it already exists
+- Signal progress via send-message (not progress.md files)
 
-## Git Push Rule
-ALWAYS push with -u to set upstream tracking:
-  git push -u origin <branch-name>
-NEVER use bare 'git push' without -u on the first push. This sets the upstream so subsequent pushes, pulls, and PR creation work without extra flags.
-
-NOT YOUR JOB (redirect to Mini Boss or Air Boss):
-- Deploying other agents or managing other pilots
+## Not Your Job (redirect to Mini Boss)
+- Deploying other agents or managing pilots
 - Triaging tickets or deciding what to work on next
-- Fetching Linear tickets or managing the mission queue
 - Coordinating multi-agent work or splitting tasks
 - Making architectural decisions that affect other tickets
 
-If asked to do something outside your role, say:
-"That's Mini Boss territory — I'm a pilot, not an orchestrator. Talk to Mini Boss for coordination/triage, or handle it from Pri-Fly."
-Stay in your lane. Do your mission. Do it well.
+If asked to do something outside your role:
+"That's Mini Boss territory — I'm a pilot, not an xo."
 
-## Sibling Coordination (pull-parent protocol)
-If you see a file at .sortie/pull-parent.json, a sibling agent has merged their work
-into the parent branch. Read the file for details, then:
-1. Run: git pull origin <branch from the file>
-2. Resolve any merge conflicts
-3. Delete .sortie/pull-parent.json
-4. Continue your work with the updated code
+## Git Rules
+**ALWAYS set upstream** — every push uses \`-u\`:
+\`\`\`bash
+git push -u origin ${BRANCH_NAME}
+\`\`\`
 
-## Project Intelligence DB
-All pilots share a SQLite database at: ${PROJECT_DIR}/.sortie/storage.db
-Use it to read prior intel, log discoveries, communicate with coordinators, and leave debriefs.
+**PR checks** — use ONE command, not three:
+\`\`\`bash
+gh pr view --json state,mergeable,reviewDecision,title,url
+\`\`\`
 
-### Read prior intel on this ticket (run on startup)
+## Storage DB Commands
+All pilots share: \`${PROJECT_DIR}/.sortie/storage.db\`
 
-    python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'
+**Check for messages (from coordinator or siblings):**
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' get-messages '${PROJECT_DIR}' '${TICKET_ID}'
+\`\`\`
 
-### Check for messages (from coordinator or siblings)
+**Signal progress/completion/blocked:**
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' send-message '${PROJECT_DIR}' - << 'MSG'
+{"from_agent": "${TICKET_ID}", "to_agent": null, "type": "done", "payload": "PR ready for review. Summary: <2 sentences>"}
+MSG
+\`\`\`
+Types: \`done\` (work complete), \`blocked\` (need help), \`progress\` (status update), \`info\` (broadcast finding)
 
-    python3 '${SCRIPT_DIR}/storage-db.py' get-messages '${PROJECT_DIR}' '${TICKET_ID}'
+**Log a discovery for other pilots:**
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' write-insight '${PROJECT_DIR}' '${TICKET_ID}' '<category>' '<detail>'
+\`\`\`
+Categories: gotcha, architecture, pattern, convention
 
-### Send a message (signal coordinator, ask for help, broadcast a discovery)
+**Write context snapshot (survives compaction):**
+\`\`\`bash
+python3 '${SCRIPT_DIR}/storage-db.py' write-snapshot '${PROJECT_DIR}' - << 'SNAP'
+{"session_id": "\$CLAUDE_SESSION_ID", "ticket_id": "${TICKET_ID}", "remaining_pct": "75", "snapshot": "Phase: implementation. Done: X. Next: Y. Blockers: none."}
+SNAP
+\`\`\`
 
-    python3 '${SCRIPT_DIR}/storage-db.py' send-message '${PROJECT_DIR}' - << 'MSG'
-    {"from_agent": "${TICKET_ID}", "to_agent": "<ticket-id or null for broadcast>", "type": "<done|blocked|progress|info>", "payload": "<message>"}
-    MSG
+## Sibling Coordination
+If you see \`.sortie/pull-parent.json\`, a sibling merged work. Read it, then:
+1. \`git pull origin <branch from file>\`
+2. Resolve conflicts
+3. Delete the file
+4. Continue
 
-Types: done (work complete), blocked (need help), progress (status update), info (broadcast finding)
-
-### Log a discovery other pilots should know
-
-    python3 '${SCRIPT_DIR}/storage-db.py' write-insight '${PROJECT_DIR}' '${TICKET_ID}' '<category>' '<detail>'
-
-Categories: gotcha, architecture, pattern, convention — only log things not obvious from the code.
-
-### Retrieve a cached tool result (after compaction or dedup hook blocks re-read)
-
-    python3 '${SCRIPT_DIR}/storage-db.py' get-cached-tool '${PROJECT_DIR}' "\$CLAUDE_SESSION_ID" <tool_name> <tool_key>
-
-tool_key: file path for Read, first 200 chars of command for Bash, "pattern:path" for Grep.
-Tool results >2KB are cached automatically. Retrieve instead of re-running when possible.
-
-### Context snapshots (write after each phase transition)
-After completing a major phase (research → implementation → testing → PR), write a snapshot.
-This survives compaction — hooks restore it automatically so you don't lose context.
-
-**IMPORTANT**: Use ONLY the JSON-stdin heredoc format below. Do NOT pass snapshot content as positional args — it will fail.
-
-    python3 '${SCRIPT_DIR}/storage-db.py' write-snapshot '${PROJECT_DIR}' - << 'SNAP'
-    {
-      "session_id": "\$CLAUDE_SESSION_ID",
-      "ticket_id": "${TICKET_ID}",
-      "remaining_pct": "<estimated % of context window remaining, e.g. 75>",
-      "snapshot": "Phase: <research|implementation|testing|pr>. Key findings: <what you learned or built>. Current plan: <what you're doing next>. Remaining: <what's left>. Files touched: <key files>. Blockers: <any or none>."
-    }
-    SNAP
-
-Write snapshots at natural breakpoints — don't wait until the end. If context gets compacted,
-the hooks will inject your last snapshot so you can pick up where you left off.
-
-### Session debrief (MANDATORY before stopping)
-Write for the next pilot — what you did, what's left, decisions made, landmines.
-
-    python3 '${SCRIPT_DIR}/storage-db.py' write-debrief '${PROJECT_DIR}' - << 'DEBRIEF'
-    {
-      "ticket_id": "${TICKET_ID}",
-      "branch": "<branch>",
-      "model": "<model>",
-      "what_done": "<1-2 sentences>",
-      "whats_left": "<1-2 sentences or empty>",
-      "decisions": "<key decisions made>",
-      "gotchas": "<landmines for the next pilot>",
-      "files_touched": "<key files>",
-      "pr_url": "<url or empty>",
-      "pr_status": "<open|merged|draft|empty>",
-      "branch_status": "<clean|needs-rebase|empty>"
-    }
-    DEBRIEF
-
----
-## Mission Directive
-
-${DIRECTIVE}
-${BRIEFING:+
----
-## Prior Intelligence
-
-${BRIEFING}}
-DIRECTIVE_EOF
-fi
-
-# Write worktree CLAUDE.md with !command injection (survives compaction)
-if [ ! -f "${WORKTREE_PATH}/CLAUDE.md" ]; then
-  cat > "${WORKTREE_PATH}/CLAUDE.md" << 'CLAUDE_MD_EOF'
-<!-- Auto-generated by deploy-agent.sh — do not edit manually -->
-## Live Pilot State (injected every turn — survives compaction)
-!cat .sortie/progress.md 2>/dev/null || echo "(no progress recorded yet)"
+## Live State (injected every turn)
 !cat .sortie/context-anchor.md 2>/dev/null
 CLAUDE_MD_EOF
-  echo "CLAUDE_MD:written"
-fi
+echo "CLAUDE_MD:written"
 
 # Model — short name on line 1, resolved checkpoint on line 2
 echo -e "${MODEL}\n${RESOLVED_MODEL}" > "${SORTIE_DIR}/model.txt"
 
 # Progress (create if missing)
-touch "${SORTIE_DIR}/progress.md"
+# Progress tracked via send-message broadcasts, not files
 
 # Stub context.json so fuel gauge never crashes on missing file
 if [ ! -f "${SORTIE_DIR}/context.json" ]; then
@@ -403,7 +386,7 @@ else
 fi
 
 # ── Build kickoff ────────────────────────────────────────────────────
-KICKOFF="Read ${SORTIE_DIR}/directive.md and follow all instructions. Track progress in ${SORTIE_DIR}/progress.md. Check for prior intel: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'"
+KICKOFF="Get your mission: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'. See CLAUDE.md for commands reference."
 
 # ── Write launch script ─────────────────────────────────────────────
 LAUNCH_SCRIPT="${SORTIE_DIR}/launch.sh"

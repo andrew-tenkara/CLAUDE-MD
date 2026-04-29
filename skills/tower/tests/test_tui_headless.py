@@ -53,7 +53,6 @@ def mock_externals():
     p2 = patch.object(_cd_mod, "AirBoss")
     mock_airboss = p2.start()
     mock_airboss_inst = MagicMock()
-    mock_airboss_inst.check_rtk = MagicMock()
     mock_airboss_inst.init_header = MagicMock()
     mock_airboss_inst.spawn = MagicMock()
     mock_airboss_inst.send_message = MagicMock()
