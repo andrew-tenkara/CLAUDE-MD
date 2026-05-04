@@ -50,6 +50,14 @@ class ItermBridge:
                 (Path(pilot.worktree_path) / ".sortie" / "flight-status.json").write_text(
                     json.dumps({"status": "ON_DECK", "phase": "on deck — pre-launch checks", "timestamp": int(time_mod.time())})
                 )
+                # Write pilot identity so CLAUDE.md !cat gets real roster values
+                (Path(pilot.worktree_path) / ".sortie" / "pilot-identity.md").write_text(
+                    f"**Callsign:** {pilot.callsign}\n"
+                    f"**Squadron:** {pilot.squadron}\n"
+                    f"**Model:** {pilot.model.upper()}\n"
+                    f"**Trait:** {pilot.trait}\n"
+                )
+
                 # Build Top Gun splash for the iTerm pane
                 p_quote, p_attr = get_pilot_launch_quote()
                 p_quote = p_quote.replace("'", "'\\''")
@@ -157,6 +165,13 @@ class ItermBridge:
             "4. Continue your work with the updated code\n"
         )
         (sortie_dir / "directive.md").write_text(pilot.directive + flight_protocol)
+
+        (sortie_dir / "pilot-identity.md").write_text(
+            f"**Callsign:** {pilot.callsign}\n"
+            f"**Squadron:** {pilot.squadron}\n"
+            f"**Model:** {pilot.model.upper()}\n"
+            f"**Trait:** {pilot.trait}\n"
+        )
 
         # Progress
         progress_file = sortie_dir / "progress.md"

@@ -31,6 +31,9 @@ BASE_BRANCH="dev"
 NO_LAUNCH=false
 WITH_BROWSER=false
 MCP_EXTRAS=""
+CALLSIGN=""
+SQUADRON=""
+TRAIT=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -42,6 +45,9 @@ while [[ $# -gt 0 ]]; do
     --no-launch)   NO_LAUNCH=true; shift ;;
     --with-browser) WITH_BROWSER=true; shift ;;
     --mcp-extra)   MCP_EXTRAS="${MCP_EXTRAS:+$MCP_EXTRAS,}$2"; shift 2 ;;
+    --callsign)    CALLSIGN="$2"; shift 2 ;;
+    --squadron)    SQUADRON="$2"; shift 2 ;;
+    --trait)       TRAIT="$2"; shift 2 ;;
     -*)            echo "ERROR: Unknown flag: $1" >&2; exit 1 ;;
     *)
       if [ -z "$TICKET_ID" ]; then
@@ -140,6 +146,9 @@ fi
 
 echo "WORKTREE:${WORKTREE_PATH}"
 
+# Resolve actual branch — may differ from BRANCH_NAME if worktree already existed
+BRANCH_NAME=$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$BRANCH_NAME")
+
 # ── Write .sortie/ protocol files ────────────────────────────────────
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
@@ -164,6 +173,14 @@ if [ "$BRIEFING" = "BRIEFING:none" ]; then
   BRIEFING=""
 fi
 
+# Pilot identity — overwritten by iterm_bridge.py when the roster assigns real values
+cat > "${SORTIE_DIR}/pilot-identity.md" << IDENTITY_EOF
+**Callsign:** ${CALLSIGN:-TBD}
+**Squadron:** ${SQUADRON:-TBD}
+**Model:** ${RESOLVED_MODEL:-${MODEL}}
+**Trait:** ${TRAIT:-TBD}
+IDENTITY_EOF
+
 # Directive — slim version (role info is in CLAUDE.md)
 if [ -n "$DIRECTIVE" ]; then
   printf '%s\n' "# Mission Directive" "" "$DIRECTIVE" > "${SORTIE_DIR}/directive.md"
@@ -175,6 +192,8 @@ cat > "${WORKTREE_PATH}/CLAUDE.md" << CLAUDE_MD_EOF
 
 ## Who You Are
 You are a **PILOT** working ticket **${TICKET_ID}** in a dedicated git worktree.
+
+!cat .sortie/pilot-identity.md
 
 **Sortie** is the agent deployment system for USS Tenkara Tower — a TUI that orchestrates multiple Claude Code agents working in parallel on different tickets. Each pilot gets their own worktree, their own branch, and a shared SQLite message bus for coordination.
 
