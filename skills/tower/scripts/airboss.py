@@ -446,6 +446,13 @@ class AirBoss:
             "  - Ticket needs to query or update Linear itself → linear\n"
             "  - Any ticket that clearly needs a specific external service the base set lacks\n"
             "\n"
+            "CRITICAL — NEVER touch .mcp.json:\n"
+            "MCP server definitions (with auth tokens) live in ~/.claude.json (global). "
+            "NEVER write MCP server blocks to the project .mcp.json — doing so creates "
+            "tokenless stubs that shadow the real global entries and break auth.\n"
+            "Your only job is to pass --mcp-extra <name> to deploy-agent.sh. "
+            "The script resolves the full config from global automatically.\n"
+            "\n"
             + self._available_extra_mcps_text()
             + "\n"
             "MISSION QUEUE:\n"
