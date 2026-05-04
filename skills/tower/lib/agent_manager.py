@@ -109,7 +109,8 @@ class AgentProcess:
         self.conversation: list[ConversationEntry] = []
 
         # Comm directory for chat relay (iTerm2 pane communication)
-        self.comm_dir = Path(f"/tmp/uss-tenkara/{callsign}")
+        import tempfile
+        self.comm_dir = Path(tempfile.gettempdir()) / "uss-tenkara" / callsign
         self.comm_dir.mkdir(parents=True, exist_ok=True)
         self._events_file = self.comm_dir / "events.jsonl"
         self._input_file = self.comm_dir / "input.jsonl"

@@ -17,12 +17,13 @@ from typing import Optional
 
 # ── Status constants ──────────────────────────────────────────────────
 
-IN_FLIGHT   = "IN_FLIGHT"
-ON_APPROACH = "ON_APPROACH"
-ON_DECK     = "ON_DECK"
-RECOVERED   = "RECOVERED"
+AIRBORNE    = "AIRBORNE"      # Active coding: writes, edits, installs
+ON_APPROACH = "ON_APPROACH"   # Wrapping up: tests, commits, PRs
+HOLDING     = "HOLDING"       # Reading/exploring, not yet writing
+PREFLIGHT   = "PREFLIGHT"     # Initial reads before first write in session
+RECOVERED   = "RECOVERED"     # Session complete
 
-_PRIORITY = {ON_DECK: 0, ON_APPROACH: 1, IN_FLIGHT: 2}
+_PRIORITY = {HOLDING: 0, ON_APPROACH: 1, AIRBORNE: 2}
 
 # ── Tool sets ─────────────────────────────────────────────────────────
 

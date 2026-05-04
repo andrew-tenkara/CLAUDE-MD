@@ -404,6 +404,55 @@ cmd_reassign_model() {
     echo "  Note: Takes effect on next agent launch/resume, not mid-flight."
 }
 
+# ── Edit mission directive ───────────────────────────────────────────
+
+cmd_edit_directive() {
+    local identifier="${1:?Usage: edit-directive <worktree|ticket> <new-directive>}"
+    shift
+    local directive="$*"
+    if [ -z "$directive" ]; then
+        echo "ERROR: No directive provided"
+        echo "Usage: edit-directive <worktree|ticket> <new-directive>"
+        return 1
+    fi
+
+    local worktree
+    worktree=$(_find_worktree "$identifier")
+
+    if [ -z "$worktree" ]; then
+        echo "ERROR: Could not find worktree for '$identifier'"
+        return 1
+    fi
+
+    # Write the new directive.md file
+    mkdir -p "$worktree/.sortie"
+    printf '%s\n' "# Mission Directive" "" "$directive" > "$worktree/.sortie/directive.md"
+
+    echo "✓ Updated directive for $(basename "$worktree")"
+    echo "  Written: $worktree/.sortie/directive.md"
+    echo "  Note: Change takes effect immediately in TUI display"
+}
+
+cmd_show_directive() {
+    local identifier="${1:?Usage: show-directive <worktree|ticket>}"
+    local worktree
+    worktree=$(_find_worktree "$identifier")
+
+    if [ -z "$worktree" ]; then
+        echo "ERROR: Could not find worktree for '$identifier'"
+        return 1
+    fi
+
+    local directive_file="$worktree/.sortie/directive.md"
+    if [ -f "$directive_file" ]; then
+        echo "═══ Current directive for $(basename "$worktree") ═══"
+        cat "$directive_file"
+    else
+        echo "No directive found for $(basename "$worktree")"
+        echo "  (File not found: $directive_file)"
+    fi
+}
+
 # ── Inject message ───────────────────────────────────────────────────
 
 cmd_inject() {
@@ -442,80 +491,6 @@ print(json.dumps(msg))
     echo "✓ Message queued for $(basename "$worktree")"
     echo "  Note: Agent reads this on next .sortie/ check cycle."
     echo "  For stream-json agents, use the chat pane instead (D key in TUI)."
-}
-
-# ── Token savings ────────────────────────────────────────────────────
-
-cmd_token_savings() {
-    local HEADROOM_PORT=8787
-    local RTK_OK=false
-    local HEADROOM_OK=false
-
-    echo "═══ USS TENKARA — TOKEN SAVINGS ═══"
-    echo ""
-
-    # ── RTK ──────────────────────────────────────────────────────────
-    echo "── RTK (CLI output compression) ──"
-    if command -v rtk &>/dev/null; then
-        RTK_OK=true
-        rtk gain 2>/dev/null || echo "  rtk gain: no data yet"
-    else
-        echo "  ✗ RTK not installed"
-    fi
-    echo ""
-
-    # ── Headroom ─────────────────────────────────────────────────────
-    echo "── HEADROOM (context compression) ──"
-    # Headroom is globally managed by SessionStart hook — check via health endpoint, not PID file
-    if curl -sf "http://localhost:${HEADROOM_PORT}/health" >/dev/null 2>&1; then
-        HEADROOM_OK=true
-        local stats
-        stats=$(curl -sf "http://localhost:${HEADROOM_PORT}/stats" 2>/dev/null)
-        if [ -n "$stats" ]; then
-            echo "$stats" | python3 -c "
-import json, sys
-try:
-    data = json.loads(sys.stdin.read())
-except Exception:
-    print('  No traffic yet — no pilots have flown through Headroom.')
-    sys.exit(0)
-s = data.get('summary', {})
-savings = data.get('savings', {})
-cost_s = s.get('cost', {})
-comp = s.get('compression', {})
-total_tokens = savings.get('total_tokens', 0)
-saved_usd   = cost_s.get('total_saved_usd', 0)
-without_usd = cost_s.get('without_headroom_usd', 0)
-with_usd    = cost_s.get('with_headroom_usd', 0)
-savings_pct = cost_s.get('savings_pct', 0)
-reqs        = s.get('api_requests', 0)
-comp_reqs   = comp.get('requests_compressed', 0)
-avg_pct     = comp.get('avg_compression_pct', 0)
-by_layer    = savings.get('by_layer', {})
-comp_tok    = by_layer.get('compression', {}).get('tokens', 0)
-cli_tok     = by_layer.get('cli_filtering', {}).get('tokens', 0)
-print(f'  Tokens saved:     {total_tokens:>10,}')
-print(f'  Cost saved:       \${saved_usd:>9.4f}')
-print(f'  Cost with:        \${with_usd:>9.4f}  vs  without: \${without_usd:.4f}')
-print(f'  Overall savings:  {savings_pct:>9.1f}%')
-print(f'  Requests:         {comp_reqs:>10,} compressed / {reqs} total')
-print(f'  Avg compression:  {avg_pct:>9.1f}%')
-print(f'  By layer:  compression {comp_tok:,} tokens  |  CLI {cli_tok:,} tokens')
-" 2>/dev/null || echo "  No stats available"
-        else
-            echo "  ✗ Proxy unreachable on port ${HEADROOM_PORT}"
-        fi
-    else
-        echo "  ✗ Headroom not running (starts automatically on next Claude session)"
-    fi
-    echo ""
-
-    # ── Summary ──────────────────────────────────────────────────────
-    if [ "$RTK_OK" = false ] && [ "$HEADROOM_OK" = false ]; then
-        echo "  ⚠ Neither RTK nor Headroom are active."
-        echo "    RTK:      brew install rtk-ai/tap/rtk && rtk init -g"
-        echo "    Headroom: pip install 'headroom-ai[all]' (auto-starts via SessionStart hook)"
-    fi
 }
 
 # ── Health check ─────────────────────────────────────────────────────
@@ -719,7 +694,8 @@ case "$cmd" in
     tail-agent|tail)   cmd_tail_agent "$@" ;;
     reassign-model)    cmd_reassign_model "$@" ;;
     inject)            cmd_inject "$@" ;;
-    token-savings|savings|gain) cmd_token_savings ;;
+    edit-directive)    cmd_edit_directive "$@" ;;
+    show-directive)    cmd_show_directive "$@" ;;
     health)            cmd_health ;;
     help|--help|-h)
         echo "USS Tenkara — XO Tools"
@@ -729,6 +705,8 @@ case "$cmd" in
         echo "  dismiss <ticket> [reason]               Force RECOVERED + session-ended"
         echo "  reassign-model <ticket> <model>         Change model (opus/sonnet/haiku)"
         echo "  inject <ticket> <message>               Queue a directive for the agent"
+        echo "  edit-directive <ticket> <directive>     Change mission directive"
+        echo "  show-directive <ticket>                 Display current mission directive"
         echo ""
         echo "Visibility:"
         echo "  board                                   Show flight deck state"
@@ -736,7 +714,6 @@ case "$cmd" in
         echo "  tail-agent <ticket>                     Tail agent's JSONL stream live"
         echo "  sentinel-status                         Sentinel health check"
         echo "  health                                  Full system health report"
-        echo "  token-savings                           RTK + Headroom savings report"
         echo ""
         echo "Maintenance:"
         echo "  kick-sync                               Force dashboard re-sync"

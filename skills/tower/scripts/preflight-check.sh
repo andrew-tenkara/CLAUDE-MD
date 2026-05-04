@@ -101,15 +101,6 @@ check_cli "Claude CLI" "claude" "npm install -g @anthropic-ai/claude-code"
 check_cli "Git" "git" "xcode-select --install"
 check_cli "GitHub CLI" "gh" "brew install gh"
 
-# RTK is optional
-if command -v rtk &>/dev/null; then
-    echo "  $PASS RTK ($(rtk --version 2>/dev/null || echo 'installed')) — token optimizer"
-else
-    echo "  $WARN RTK — not installed (optional, saves 60-90% tokens)"
-    echo "    Install: brew install rtk && rtk init -g"
-    warnings=$((warnings + 1))
-fi
-
 echo ""
 
 # ── 4. MCP Servers ───────────────────────────────────────────────────

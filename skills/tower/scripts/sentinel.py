@@ -36,13 +36,16 @@ from read_sortie_state import read_sortie_state
 log = logging.getLogger("sentinel")
 
 # ── Config ────────────────────────────────────────────────────────────
+# Tuned for typical agent behavior: tool calls ~1-5s apart during active work,
+# longer pauses during thinking/planning. Values below balance responsiveness
+# with avoiding false transitions.
 
-DEBOUNCE_SECS     = 3.0   # Seconds after last JSONL write before classifying
-IDLE_THRESHOLD    = 90    # Seconds of silence → write HOLDING / idle
-SYNC_INTERVAL     = 30    # Seconds between worktree rescans
-EVENT_WINDOW      = 100   # Rolling window size (events) per worktree
-HEARTBEAT_SECS    = 10    # How often to write sentinel-heartbeat.json
-PROPOSE_THRESHOLD = 3     # Consecutive identical proposals before calling gate
+DEBOUNCE_SECS     = 3.0   # Wait after last JSONL write before classifying (avoids mid-burst reads)
+IDLE_THRESHOLD    = 90    # Silence threshold for HOLDING status (>1 min covers think time, <2 min stays responsive)
+SYNC_INTERVAL     = 30    # Worktree rescan interval (fast enough to catch new agents, slow enough to not spam FS)
+EVENT_WINDOW      = 100   # Rolling window for classification (~5-10 min of typical activity)
+HEARTBEAT_SECS    = 10    # Heartbeat write interval (TUI polls this for sentinel health)
+PROPOSE_THRESHOLD = 3     # Required consecutive proposals before gate call (prevents flapping on noisy transitions)
 
 
 # ── JSONL tail reader ─────────────────────────────────────────────────

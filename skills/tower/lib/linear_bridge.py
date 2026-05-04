@@ -270,4 +270,8 @@ def _extract_json_array(text: str) -> Optional[list]:
                     return json.loads(text[start : i + 1])
                 except (json.JSONDecodeError, ValueError):
                     start = -1
+    # Log when extraction fails — helps debug Claude MCP output issues
+    if text.strip():
+        import logging
+        logging.getLogger(__name__).debug("Failed to extract JSON array from: %s", text[:200])
     return None

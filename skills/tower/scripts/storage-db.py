@@ -189,7 +189,7 @@ def cmd_init(project_dir: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_summaries_ticket ON summaries(ticket_id);
         CREATE INDEX IF NOT EXISTS idx_summaries_level ON summaries(level, created_at DESC);
 
-        -- CCR: full tool results cached before headroom compresses them
+        -- CCR: full tool results cached before context compression
         CREATE TABLE IF NOT EXISTS tool_cache (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             session_id TEXT NOT NULL,
@@ -395,6 +395,16 @@ def cmd_get_briefing(project_dir: str, ticket_id: str) -> None:
     conn = get_db(project_dir)
     now = int(time.time())
 
+    # ── 0. Load directive from worktree (if exists) ──────────────────────
+    directive_content = ""
+    worktree_dir = Path(project_dir) / ".claude" / "worktrees" / ticket_id
+    directive_path = worktree_dir / ".sortie" / "directive.md"
+    if directive_path.exists():
+        try:
+            directive_content = directive_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
     # ── 1. Direct debriefs for this ticket ───────────────────────────────
     debriefs = conn.execute(
         """SELECT * FROM debriefs WHERE ticket_id = ?
@@ -497,7 +507,14 @@ def cmd_get_briefing(project_dir: str, ticket_id: str) -> None:
         conn.close()
         return
 
-    lines = ["## Prior Intelligence\n"]
+    lines = []
+
+    # Directive first (mission context)
+    if directive_content:
+        lines.append(directive_content)
+        lines.append("\n---\n")
+
+    lines.append("## Prior Intelligence\n")
 
     if recent_snapshot:
         lines.append("## Last Session Snapshot (pre-compaction)\n")

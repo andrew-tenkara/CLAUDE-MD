@@ -20,8 +20,6 @@ Full agent orchestration dashboard. You are the Air Boss — spawn agents, manag
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| **Headroom** | Context compression proxy for all pilots | `pip install 'headroom-ai[all]'` |
-| **RTK** | CLI output token compression (60-90% savings) | `brew install rtk-ai/tap/rtk && rtk init -g` |
 | **CGC** | Code graph + fuzzy symbol search (dedup check) | `pipx install codegraphcontext` — see setup below |
 | **Serena** | Per-worktree code intelligence MCP | `uvx --from git+https://github.com/oraios/serena serena` |
 
@@ -86,7 +84,6 @@ Options:
 | `K` | Compact — trigger context compaction |
 | `S` | Sync — re-scan worktrees |
 | `M` | Relaunch Mini Boss |
-| `H` | Headroom monitor |
 | `F` | Toggle flight strip visibility |
 | `Q` | Quit |
 
@@ -154,7 +151,6 @@ bash ~/.claude/skills/tower/scripts/xo-tools.sh <command> [args...]
 | `reassign-model <ticket> <model>` | Change model |
 | `clear-stale` | Mark dead agents as ended |
 | `tail-agent <ticket>` | Tail agent's JSONL stream |
-| `token-savings` | RTK + Headroom savings report |
 
 ## Mission Board — Column Reference
 

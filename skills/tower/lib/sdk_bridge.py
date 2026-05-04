@@ -172,6 +172,11 @@ class SdkAgent:
             log.info("JSONL tee: %s", self._jsonl_path)
         except Exception as e:
             log.warning("Failed to init JSONL tee: %s", e)
+            if self._jsonl_file is not None:
+                try:
+                    self._jsonl_file.close()
+                except Exception:
+                    pass
             self._jsonl_file = None
 
     def _write_jsonl(self, data: dict) -> None:

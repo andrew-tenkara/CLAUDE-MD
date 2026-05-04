@@ -131,8 +131,6 @@ class CommandDispatcher:
 
         self._launch_agent(pilot, directive)
         ctx._add_radio("PRI-FLY", f"ON DECK — {pilot.callsign} standing by for {identifier}", "success")
-        if getattr(ctx, '_rtk_active', False):
-            ctx._add_radio(pilot.callsign, "RTK active — drop tanks fitted, extended range", "system")
         _notify("USS TENKARA", f"{pilot.callsign} on deck for {identifier}")
         ctx._refresh_ui()
 
