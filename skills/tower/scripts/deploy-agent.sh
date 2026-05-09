@@ -67,8 +67,8 @@ fi
 # Map short names to pinned checkpoints. Set to "latest" to let Claude
 # Code resolve to its current default for that tier.
 # Swap these when a new checkpoint drops — one place, all pilots.
-MODEL_SONNET="claude-sonnet-4-20250514"
-MODEL_OPUS="claude-opus-4-1-20250805"
+MODEL_SONNET="latest"
+MODEL_OPUS="latest"
 MODEL_HAIKU="latest"
 
 # Validate & resolve
