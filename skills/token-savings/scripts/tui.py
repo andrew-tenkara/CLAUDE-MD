@@ -142,6 +142,79 @@ def get_headroom_stats():
         return None
 
 
+def get_pith_stats():
+    """Parse ~/.pith/telemetry.jsonl into aggregate savings. None if not installed."""
+    import os
+    telemetry = os.path.expanduser("~/.pith/telemetry.jsonl")
+    hook = os.path.expanduser("~/.claude/hooks/pith/post-tool-use.js")
+    if not os.path.exists(hook):
+        return None
+    stats = {"installed": True, "events": 0, "before": 0, "after": 0, "tokens_saved": 0, "by_tool": {}, "session_saved": 0}
+    if not os.path.exists(telemetry):
+        return stats
+    try:
+        with open(telemetry) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                b = e.get("before_tokens", 0) or 0
+                a = e.get("after_tokens", 0) or 0
+                tool = e.get("tool", "?")
+                stats["before"] += b
+                stats["after"] += a
+                stats["events"] += 1
+                d = stats["by_tool"].setdefault(tool, {"before": 0, "after": 0, "count": 0})
+                d["before"] += b; d["after"] += a; d["count"] += 1
+        stats["tokens_saved"] = stats["before"] - stats["after"]
+    except OSError:
+        pass
+    state_path = os.path.expanduser("~/.pith/state.json")
+    if os.path.exists(state_path):
+        try:
+            with open(state_path) as f:
+                state = json.load(f)
+            stats["session_saved"] = sum((p.get("tokens_saved_session", 0) or 0) for p in state.values())
+        except Exception:
+            pass
+    return stats
+
+
+def build_pith_panel(stats, narrow=False):
+    title = "[bold]Pith[/bold]" if narrow else "[bold]Pith: Tool-Result Compression[/bold]"
+    if stats is None:
+        return Panel(
+            Text("NOT INSTALLED\n\nInstall: bash <(curl -s https://raw.githubusercontent.com/abhisekjha/pith/main/install.sh)", style="yellow"),
+            title=title, border_style="yellow",
+        )
+    t = Table(show_header=False, box=None, padding=(0, 1 if narrow else 2))
+    t.add_column("k", style="dim", width=12 if narrow else 16, no_wrap=True)
+    t.add_column("v", no_wrap=True, overflow="ellipsis")
+    t.add_row("Status", "[green]ACTIVE[/green] (PostToolUse)")
+    t.add_row("Tokens saved", f"[cyan]{fmt(stats['tokens_saved'])}[/cyan]")
+    t.add_row("Events", f"{stats['events']:,}")
+    pct = (stats["tokens_saved"] / stats["before"]) if stats["before"] else 0
+    bar_width = 15 if narrow else 25
+    bar = "█" * int(pct * bar_width) + "░" * (bar_width - int(pct * bar_width))
+    t.add_row("Avg reduction", f"[green]{bar}[/green] {pct*100:.1f}%")
+    if stats.get("session_saved"):
+        t.add_row("This session", f"[cyan]{fmt(stats['session_saved'])}[/cyan]")
+    top = sorted(
+        ((tool, d["before"] - d["after"], d["count"]) for tool, d in stats["by_tool"].items() if d["before"] > d["after"]),
+        key=lambda x: x[1], reverse=True,
+    )[: (3 if narrow else 5)]
+    if top:
+        t.add_row("", "")
+        t.add_row("[bold]Top Tools[/bold]", "")
+        for tool, tsaved, count in top:
+            t.add_row(f"  {tool}", f"{count:>4} {fmt(tsaved):>7}")
+    return Panel(t, title=title, border_style="green")
+
+
 def get_headroom_version():
     try:
         req = urllib.request.Request(f"{HEADROOM_URL}/health")
@@ -259,17 +332,18 @@ def build_headroom_panel(stats, narrow=False):
     return Panel(t, title=title, border_style="blue")
 
 
-def build_footer(rtk, hr):
+def build_footer(rtk, hr, pith=None):
     rtk_saved = rtk["tokens_saved"] if rtk else 0
     hr_comp = hr.get("savings", {}).get("by_layer", {}).get("compression", {}).get("tokens", 0) if hr else 0
     hr_total = hr.get("savings", {}).get("total_tokens", 0) if hr else 0
+    pith_saved = pith["tokens_saved"] if pith else 0
     cost = hr.get("cost", {}) if hr else {}
     cache_usd = hr.get("prefix_cache", {}).get("totals", {}).get("savings_usd", 0) if hr else 0
 
     text = Text()
     text.append("Combined: ", style="bold")
-    text.append(f"{rtk_saved + hr_comp:,.0f} tokens filtered", style="bold green")
-    text.append(f"  (RTK: {fmt(rtk_saved)} + Headroom compression: {fmt(hr_comp)})")
+    text.append(f"{rtk_saved + pith_saved + hr_comp:,.0f} tokens saved", style="bold green")
+    text.append(f"  (RTK: {fmt(rtk_saved)} + Pith: {fmt(pith_saved)} + Headroom compression: {fmt(hr_comp)})")
     if cache_usd > 0:
         text.append(f"\n  Prefix cache (Anthropic-side): ${cache_usd:.2f} saved", style="dim")
     if cost.get("savings_usd", 0) > 0:
@@ -387,17 +461,19 @@ def build_recent_panel(stats, narrow=False):
     return Panel(content, title="[bold]Recent Requests[/bold]", border_style="cyan")
 
 
-def build_layout(rtk, hr):
+def build_layout(rtk, hr, pith=None):
     narrow = console.width < NARROW_THRESHOLD
     layout = Layout()
 
     if narrow:
         # Stacked vertical layout for half-screen / small terminals
+        # RTK/Headroom: 5→4 (-20%). Freed ratio (2) goes to Pith.
         layout.split_column(
             Layout(name="header", size=1),
-            Layout(build_rtk_panel(rtk, narrow=True), name="rtk", ratio=1),
-            Layout(build_headroom_panel(hr, narrow=True), name="headroom", ratio=1),
-            Layout(build_recent_panel(hr, narrow=True), name="recent", ratio=1),
+            Layout(build_rtk_panel(rtk, narrow=True), name="rtk", ratio=4),
+            Layout(build_headroom_panel(hr, narrow=True), name="headroom", ratio=4),
+            Layout(build_pith_panel(pith, narrow=True), name="pith", ratio=2),
+            Layout(build_recent_panel(hr, narrow=True), name="recent", ratio=5),
             Layout(name="footer", size=3),
         )
     else:
@@ -411,13 +487,15 @@ def build_layout(rtk, hr):
             Layout(name="stats", ratio=1),
             Layout(build_recent_panel(hr, narrow=False), name="recent", ratio=1),
         )
+        # RTK/Headroom go 5→4 (-20%), freed ratio (2) goes to a new Pith panel
         layout["stats"].split_column(
-            Layout(build_rtk_panel(rtk, narrow=False), name="rtk"),
-            Layout(build_headroom_panel(hr, narrow=False), name="headroom"),
+            Layout(build_rtk_panel(rtk, narrow=False), name="rtk", ratio=4),
+            Layout(build_headroom_panel(hr, narrow=False), name="headroom", ratio=4),
+            Layout(build_pith_panel(pith, narrow=False), name="pith", ratio=2),
         )
 
     layout["header"].update(Text(" TOKEN SAVINGS MONITOR", style="bold white on dark_green", justify="center"))
-    layout["footer"].update(build_footer(rtk, hr))
+    layout["footer"].update(build_footer(rtk, hr, pith))
     return layout
 
 
@@ -427,7 +505,8 @@ def main():
             while True:
                 rtk = get_rtk_stats()
                 hr = get_headroom_stats()
-                live.update(build_layout(rtk, hr))
+                pith = get_pith_stats()
+                live.update(build_layout(rtk, hr, pith))
                 time.sleep(REFRESH_INTERVAL)
     except KeyboardInterrupt:
         console.clear()
