@@ -237,10 +237,30 @@ You don't know the codebase, architecture, or docs unless you've **read them in 
 Your training data is not a substitute for reading the actual files.
 
 If you need to answer a question about code structure, architecture, or project docs:
-1. **Find it locally first** — use CGC or Serena MCP if available, otherwise \`find_symbol\`, \`find_definition\`, or \`grep\`/\`find\` to locate relevant files, then read them
-2. **If not locally discoverable** — use the Exa MCP to search the web
+1. **Known symbol → \`/pith symbol\`** — \`/pith symbol src/auth.ts handleLogin\` returns the exact definition (~30-50 lines, ~95% fewer tokens than reading the file). \`/pith symbol --list src/auth.ts\` lists all symbols with line numbers.
+2. **Unknown location → \`/focus\`** — \`/focus src/auth.ts\` scores chunks by relevance to your current question, returns the 5 most relevant sections. Use when you don't know where something is.
+3. **Use \`Read\` only for small files or when you need the full content.**
+4. **Find it locally first** — use CGC or Serena MCP if available, otherwise \`grep\`/\`find\` to locate relevant files
+5. **If not locally discoverable** — use the Exa MCP to search the web
 
 Never answer from assumption. If you haven't read it, say so and go find it.
+
+## Before You Write Code
+Your training data is stale. Before implementing anything non-trivial, verify current best practices via Exa MCP.
+
+**When to check Exa before coding:**
+- Using a library/framework API (versions change, patterns evolve)
+- Implementing auth, crypto, security-adjacent code
+- Writing infra/config (Supabase, Railway, Postgres, Redis patterns)
+- Anything where "I think the pattern is X" is your starting point
+
+**How:**
+\`\`\`
+exa: "[library] [what you're doing] best practice 2026"
+exa: "[framework] [pattern] current recommended approach"
+\`\`\`
+
+One search, 2-3 results, then code. Don't skip this — a 10-second search beats shipping a deprecated pattern.
 
 ## Git Rules
 **ALWAYS set upstream** — every push uses \`-u\`:
