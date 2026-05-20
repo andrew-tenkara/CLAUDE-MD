@@ -212,7 +212,7 @@ def build_pith_panel(stats, narrow=False):
         t.add_row("[bold]Top Tools[/bold]", "")
         for tool, tsaved, count in top:
             t.add_row(f"  {tool}", f"{count:>4} {fmt(tsaved):>7}")
-    return Panel(t, title=title, border_style="green")
+    return Panel(t, title=title, border_style="medium_purple3")
 
 
 def get_headroom_version():
@@ -471,8 +471,8 @@ def build_layout(rtk, hr, pith=None):
         layout.split_column(
             Layout(name="header", size=1),
             Layout(build_rtk_panel(rtk, narrow=True), name="rtk", ratio=4),
-            Layout(build_headroom_panel(hr, narrow=True), name="headroom", ratio=4),
             Layout(build_pith_panel(pith, narrow=True), name="pith", ratio=2),
+            Layout(build_headroom_panel(hr, narrow=True), name="headroom", ratio=4),
             Layout(build_recent_panel(hr, narrow=True), name="recent", ratio=5),
             Layout(name="footer", size=3),
         )
@@ -490,8 +490,8 @@ def build_layout(rtk, hr, pith=None):
         # RTK/Headroom go 5→4 (-20%), freed ratio (2) goes to a new Pith panel
         layout["stats"].split_column(
             Layout(build_rtk_panel(rtk, narrow=False), name="rtk", ratio=4),
-            Layout(build_headroom_panel(hr, narrow=False), name="headroom", ratio=4),
             Layout(build_pith_panel(pith, narrow=False), name="pith", ratio=2),
+            Layout(build_headroom_panel(hr, narrow=False), name="headroom", ratio=4),
         )
 
     layout["header"].update(Text(" TOKEN SAVINGS MONITOR", style="bold white on dark_green", justify="center"))

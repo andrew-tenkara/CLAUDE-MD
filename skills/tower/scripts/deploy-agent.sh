@@ -157,12 +157,14 @@ mkdir -p "$SORTIE_DIR"
 # --skip-worktree is the right flag for "I changed this locally, don't commit it"
 (cd "$WORKTREE_PATH" && git update-index --skip-worktree CLAUDE.md 2>/dev/null) || true
 
-# Exclude .sortie/ from git (untracked, so info/exclude works)
+# Exclude .sortie/ and CLAUDE.md from git tracking in this worktree
+# (info/exclude is per-worktree, doesn't affect other worktrees or the main repo)
 if [ -f "${WORKTREE_PATH}/.git" ]; then
   GIT_DIR=$(cat "${WORKTREE_PATH}/.git" | sed 's/gitdir: //')
   EXCLUDE_FILE="${GIT_DIR}/info/exclude"
   mkdir -p "$(dirname "$EXCLUDE_FILE")"
   grep -q "^\.sortie/$" "$EXCLUDE_FILE" 2>/dev/null || echo ".sortie/" >> "$EXCLUDE_FILE"
+  grep -q "^CLAUDE\.md$" "$EXCLUDE_FILE" 2>/dev/null || echo "CLAUDE.md" >> "$EXCLUDE_FILE"
 fi
 
 # ── Init storage DB + fetch briefing ─────────────────────────────────
@@ -197,12 +199,20 @@ You are a **PILOT** working ticket **${TICKET_ID}** in a dedicated git worktree.
 
 **Sortie** is the agent deployment system for USS Tenkara Tower — a TUI that orchestrates multiple Claude Code agents working in parallel on different tickets. Each pilot gets their own worktree, their own branch, and a shared SQLite message bus for coordination.
 
-| Path | What |
+## Your Working Directory
+
+**Your CWD and git root is: \`${WORKTREE_PATH}\`**
+
+This worktree contains a **full copy of the codebase** on your branch. All file operations — reads, edits, git commands — must use paths relative to this directory or the absolute path \`${WORKTREE_PATH}\`.
+
+**Never \`cd\` to or operate on files in \`${PROJECT_DIR}\` — that is the main repo and a different branch.** The only reason \`${PROJECT_DIR}\` appears below is as an argument to coordination scripts (storage-db.py, etc.).
+
+| What | Path |
 |------|------|
-| **Worktree** | \`${WORKTREE_PATH}\` |
-| **Branch** | \`${BRANCH_NAME}\` |
-| **Project root** | \`${PROJECT_DIR}\` |
-| **Sortie state** | \`.sortie/\` (flight status, context, messages) |
+| **Your worktree (git root / CWD)** | \`${WORKTREE_PATH}\` |
+| **Your branch** | \`${BRANCH_NAME}\` |
+| **Coordination scripts only** | \`${PROJECT_DIR}/.sortie/\` |
+| **Sortie state (yours)** | \`.sortie/\` |
 | **Sortie scripts** | \`${SCRIPT_DIR}/\` |
 
 **Key scripts you can use:**
@@ -435,7 +445,7 @@ else
 fi
 
 # ── Build kickoff ────────────────────────────────────────────────────
-KICKOFF="Get your mission: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'. See CLAUDE.md for commands reference."
+KICKOFF="Read .sortie/directive.md for your mission directive. Then check for prior intel: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'. See CLAUDE.md for commands and protocol."
 
 # ── Write launch script ─────────────────────────────────────────────
 LAUNCH_SCRIPT="${SORTIE_DIR}/launch.sh"

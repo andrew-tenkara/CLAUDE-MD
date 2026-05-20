@@ -84,21 +84,45 @@ If the user explicitly wants a Linear ticket for a text/file directive, they can
 
 ## Create Worktree (no launch)
 
-Resolve the project directory and call the deploy script in **no-launch mode** — this creates the worktree and `.sortie/` protocol files but does NOT open an iTerm pane or start claude:
+Resolve the project directory and call the deploy script in **no-launch mode** — this creates the worktree and `.sortie/` protocol files but does NOT open an iTerm pane or start claude.
+
+**IMPORTANT: Never pass `--directive` on the CLI.** Multi-line ticket content breaks shell quoting. Instead, run deploy-agent.sh first, parse the worktree path from its output, then write `directive.md` separately using Python.
 
 ```bash
 DEPLOY=~/.claude/skills/tower/scripts/deploy-agent.sh
 PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null)
 
-bash "$DEPLOY" <ticket-id> \
+# Step 1: create the worktree (no directive yet)
+OUTPUT=$(bash "$DEPLOY" <ticket-id> \
   --no-launch \
   --model <model> \
   --branch "<git-branch-name>" \
-  --directive "<description or file contents>" \
-  --project-dir "$PROJECT_DIR"
+  --project-dir "$PROJECT_DIR" 2>&1)
+echo "$OUTPUT"
+
+# Step 2: parse the worktree path from deploy output
+WORKTREE_PATH=$(echo "$OUTPUT" | grep '^WORKTREE:' | head -1 | sed 's/^WORKTREE://')
 ```
 
 **Check the exit code.** If deploy-agent.sh exits non-zero, report the failure clearly and do NOT tell the user the pilot is on deck.
+
+**Step 3: write directive.md using Python** (avoids all shell quoting issues — the directive content is passed as a Python string literal via stdin):
+
+```bash
+python3 - "$WORKTREE_PATH" << 'PYEOF'
+import sys, pathlib, textwrap
+
+worktree = pathlib.Path(sys.argv[1])
+directive = """<full ticket content here — title, description, ACs, comments>"""
+
+out = worktree / ".sortie" / "directive.md"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(f"# Mission Directive\n\n{directive.strip()}\n")
+print(f"directive.md written ({len(directive)} chars)")
+PYEOF
+```
+
+Replace `<full ticket content here>` with the actual ticket text. Use `\"\"\"` escaping inside the triple-quoted string if the content contains triple-quotes (rare).
 
 The TUI's pilot roster scan picks up the new worktree automatically (next 3s cycle). The pilot appears on the board as **IDLE** — on deck, ready for deployment.
 
@@ -174,19 +198,22 @@ PARENT_WORKTREE="${PROJECT_DIR}/.claude/worktrees/${PARENT_ID}"
 PARENT_BRANCH="sortie/${PARENT_ID}"  # or gitBranchName from Linear
 ```
 
-**Step 1: Deploy coordinator** with `--no-launch` and the coordinator directive below.
+**Step 1: Deploy coordinator** with `--no-launch` (no `--directive` flag — write directive.md separately per the pattern above).
 
 **Step 2: Parse `WORKTREE:<path>` from deploy output** to confirm the parent path.
 
-**Step 3: Deploy each sub-agent** with:
+**Step 3: Write coordinator directive.md** using the Python pattern above (replacing `<full ticket content>` with the coordinator directive template below).
+
+**Step 4: Deploy each sub-agent** with:
 ```bash
 bash "$DEPLOY" <sub-id> \
   --no-launch \
   --model sonnet \
   --branch "<SUB_ID>" \
-  --directive "<sub-agent directive>" \
   --project-dir "$PARENT_WORKTREE"
 ```
+
+Then write each sub-agent's `directive.md` using the same Python pattern, targeting `$PARENT_WORKTREE/.claude/worktrees/<SUB_ID>/.sortie/directive.md`.
 
 Sub-agents use `--branch <SUB_ID>` (e.g. `ENG-256-A`) — a local branch only.
 Sub-agents use `--project-dir <PARENT_WORKTREE>` so their `.sortie/` lives inside the parent and they share the same `storage.db`.
@@ -195,7 +222,7 @@ Sub-agents use `--project-dir <PARENT_WORKTREE>` so their `.sortie/` lives insid
 
 ### Coordinator Directive Template
 
-Construct this string (substitute all `<...>` tokens) and pass as `--directive`:
+Construct this string (substitute all `<...>` tokens) and write to `directive.md` via the Python pattern:
 
 ```
 ## Role: COORDINATOR

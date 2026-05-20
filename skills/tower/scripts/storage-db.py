@@ -502,7 +502,7 @@ def cmd_get_briefing(project_dir: str, ticket_id: str) -> None:
         (ticket_id, now - 7200),
     ).fetchone()
 
-    if not debriefs and not summary_row and not insights and not sessions and not messages and not recent_snapshot:
+    if not debriefs and not summary_row and not insights and not sessions and not messages and not recent_snapshot and not directive_content:
         print("BRIEFING:none")
         conn.close()
         return

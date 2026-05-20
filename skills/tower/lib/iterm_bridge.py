@@ -82,7 +82,7 @@ class ItermBridge:
                     "sleep 1\n"
                 )
                 splash_script.chmod(0o755)
-                cmd = f"bash '{splash_script}' && bash '{launch_script}'"
+                cmd = f"cd '{pilot.worktree_path}' && bash '{splash_script}' && bash '{launch_script}'"
                 self.pane_cmd(pilot.callsign, cmd)
                 self.ctx._watch_agent_jsonl(pilot.worktree_path)
                 self.ctx._add_radio(pilot.callsign, "Launching from prepped worktree", "success")
@@ -275,7 +275,7 @@ class ItermBridge:
         pilot.flight_phase = "on deck — pre-launch checks"
         self.ctx._watch_agent_jsonl(str(worktree_path))
 
-        cmd = f"bash '{launch_script}'"
+        cmd = f"cd '{worktree_path}' && bash '{launch_script}'"
         self.pane_cmd(pilot.callsign, cmd)
 
     def resume_agent_pane(self, pilot: "Pilot") -> None:
@@ -342,9 +342,41 @@ class ItermBridge:
         pilot.launched_at = time_mod.time()
         self.ctx._watch_agent_jsonl(str(worktree_path))
 
-        cmd = f"bash '{resume_script}'"
+        cmd = f"cd '{worktree_path}' && bash '{resume_script}'"
         self.pane_cmd(pilot.callsign, cmd)
         self.ctx._add_radio(pilot.callsign, f"RESUME — open session in {pilot.ticket_id} worktree", "success")
+
+    def kill_pane(self, callsign: str) -> None:
+        """Close the iTerm2 session for the given callsign (no-op if already gone)."""
+        try:
+            state_dir = Path("/tmp/uss-tenkara/_prifly")
+            agents_window_file = state_dir / "agents_window_id"
+            if agents_window_file.exists():
+                window_id = agents_window_file.read_text().strip()
+                # Collect matching sessions first, then close — avoids mutating
+                # the list while iterating, which can cause AppleScript errors.
+                applescript = f'''
+tell application "iTerm2"
+    set targetWindow to (windows whose id is {window_id})'s item 1
+    set killList to {{}}
+    repeat with s in sessions of current tab of targetWindow
+        if name of s is "{callsign}" then
+            set end of killList to s
+        end if
+    end repeat
+    repeat with s in killList
+        close s
+    end repeat
+end tell
+'''
+                subprocess.run(
+                    ["osascript", "-e", applescript],
+                    capture_output=True, text=True, timeout=10,
+                )
+        except Exception as e:
+            self.ctx._add_radio("PRI-FLY", f"kill_pane {callsign}: {e}", "error")
+        finally:
+            self.ctx._iterm_panes.discard(callsign)
 
     def pane_cmd(self, callsign: str, cmd: str) -> None:
         """Run a command in the Pit Boss iTerm2 window (shared pane layout)."""
