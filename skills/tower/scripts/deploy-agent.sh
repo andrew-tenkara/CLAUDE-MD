@@ -228,8 +228,8 @@ python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID
 \`\`\`
 
 ## Your Job
-- Execute your directive — implement, fix, test, PR
-- Write code, run tests, commit changes, open PRs
+- Execute your directive — implement, fix, test, open a draft PR
+- Write code, run tests, commit changes, open draft PRs (never ready-for-review)
 - Before implementing any new function, use find_symbol to check if it already exists
 - Signal progress via send-message (not progress.md files)
 
@@ -278,9 +278,15 @@ One search, 2-3 results, then code. Don't skip this — a 10-second search beats
 git push -u origin ${BRANCH_NAME}
 \`\`\`
 
+**Open PRs as DRAFT** — always, no exceptions. Air Boss / human reviewer marks them ready:
+\`\`\`bash
+gh pr create --draft --title "..." --body "..."
+\`\`\`
+Never use \`gh pr create\` without \`--draft\`, and never run \`gh pr ready\` on your own PR.
+
 **PR checks** — use ONE command, not three:
 \`\`\`bash
-gh pr view --json state,mergeable,reviewDecision,title,url
+gh pr view --json state,mergeable,reviewDecision,title,url,isDraft
 \`\`\`
 
 ## Storage DB Commands
@@ -294,7 +300,7 @@ python3 '${SCRIPT_DIR}/storage-db.py' get-messages '${PROJECT_DIR}' '${TICKET_ID
 **Signal progress/completion/blocked:**
 \`\`\`bash
 python3 '${SCRIPT_DIR}/storage-db.py' send-message '${PROJECT_DIR}' - << 'MSG'
-{"from_agent": "${TICKET_ID}", "to_agent": null, "type": "done", "payload": "PR ready for review. Summary: <2 sentences>"}
+{"from_agent": "${TICKET_ID}", "to_agent": null, "type": "done", "payload": "Draft PR ready for review. Summary: <2 sentences>"}
 MSG
 \`\`\`
 Types: \`done\` (work complete), \`blocked\` (need help), \`progress\` (status update), \`info\` (broadcast finding)
