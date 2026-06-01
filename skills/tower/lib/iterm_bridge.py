@@ -129,6 +129,11 @@ class ItermBridge:
         sortie_dir = Path(worktree_path) / ".sortie"
         sortie_dir.mkdir(parents=True, exist_ok=True)
 
+        # Resolve the skill's templates dir for the pilot kickoff message.
+        # The pilot reads plan-template.html from here and Writes
+        # .sortie/plan.html directly — no copy/symlink at launch time.
+        templates_dir = Path(__file__).resolve().parent.parent / "templates"
+
         # Clear stale session-ended sentinel from previous run
         session_ended = sortie_dir / "session-ended"
         if session_ended.exists():
@@ -210,7 +215,26 @@ class ItermBridge:
             "'Bash(sudo:*)' 'Bash(chmod:*)' 'Bash(chown:*)'"
         )
 
-        kickoff = f"Read {sortie_dir}/directive.md and follow all instructions. Track progress in {sortie_dir}/progress.md"
+        kickoff = (
+            f"Read {sortie_dir}/directive.md and follow all instructions. "
+            f"See CLAUDE.md for the full sortie protocol. DO NOT WRITE CODE YET. "
+            f"Phase 1 (Plan): Read the canonical plan template at "
+            f"{templates_dir}/plan-template.html (do NOT copy — read with the Read tool as "
+            f"structural reference). Write {sortie_dir}/plan.html from scratch as a fully "
+            f"self-contained HTML doc matching the template's head/styles/scripts, with this "
+            f"sortie's real content in the <article id='doc'> body. No markdown file — HTML "
+            f"is the only source of truth. Opens in any browser via file:// — no server needed. "
+            f"Invoke superpowers:brainstorming, then superpowers:writing-plans. The plan MUST "
+            f"include a Reuse Audit (find_symbol/grep/CGC) AND a Blast Radius per CHANGE block "
+            f"(use CGC: analyze_code_relationships query_type=find_all_callers,find_all_callees "
+            f"on each modified symbol — render as the Mermaid graph the template shows). MUST "
+            f"verify library/API/framework choices via the exa-search skill during planning — "
+            f"not after. Send {sortie_dir}/plan.html to Mini Boss via send-message and WAIT "
+            f"for approval. Phase 2 (Implement): only after approval. Update {sortie_dir}/plan.html checkboxes "
+            f"in-place — single source of truth for progress. Use superpowers throughout "
+            f"(test-driven-development, systematic-debugging, verification-before-completion, "
+            f"requesting-code-review). If a superpowers skill plausibly applies, invoke it."
+        )
 
         # Random pilot quote (escape single quotes for bash printf)
         p_quote, p_attr = get_pilot_launch_quote()
@@ -264,7 +288,9 @@ class ItermBridge:
             f"trap cleanup_flight EXIT\n"
             f"\n"
             f"{splash}"
-            f"claude --model {pilot.model} '{kickoff}' "
+            # Escape literal ' inside kickoff so the outer single-quoted bash
+            # arg doesn't terminate at "sortie's", embedded quoted paths, etc.
+            f"claude --model {pilot.model} '{kickoff.replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}' "
             f"--disallowedTools {disallowed}\n"
         )
         launch_script.chmod(0o755)

@@ -153,18 +153,28 @@ BRANCH_NAME=$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null ||
 SORTIE_DIR="${WORKTREE_PATH}/.sortie"
 mkdir -p "$SORTIE_DIR"
 
-# Tell git to ignore local changes to CLAUDE.md (it's tracked but we modify it per-worktree)
-# --skip-worktree is the right flag for "I changed this locally, don't commit it"
-(cd "$WORKTREE_PATH" && git update-index --skip-worktree CLAUDE.md 2>/dev/null) || true
+# Resolve the skill's templates dir — pilot CLAUDE.md (below) tells the pilot
+# to read plan-template.html from here and Write .sortie/plan.html directly.
+# No copy/symlink at deploy time: the plan is fully self-contained HTML the
+# pilot fills in. Opens in any browser via file:// — no server required.
+TEMPLATES_DIR="$(cd "${SCRIPT_DIR}/../templates" && pwd)"
 
-# Exclude .sortie/ and CLAUDE.md from git tracking in this worktree
-# (info/exclude is per-worktree, doesn't affect other worktrees or the main repo)
-if [ -f "${WORKTREE_PATH}/.git" ]; then
-  GIT_DIR=$(cat "${WORKTREE_PATH}/.git" | sed 's/gitdir: //')
-  EXCLUDE_FILE="${GIT_DIR}/info/exclude"
+# CLAUDE.md is overwritten per-worktree with the pilot operating manual. Keep it
+# out of commits regardless of branch state:
+#   - untracked on this branch → ignored via the SHARED common-dir info/exclude
+#   - tracked on this branch   → hidden via --skip-worktree
+# info/exclude lives in $GIT_COMMON_DIR (shared by ALL worktrees + main); let git
+# resolve the real path rather than constructing it from `--git-dir`, which in a
+# worktree points to a per-worktree dir git does NOT consult for excludes.
+EXCLUDE_FILE=$(git -C "$WORKTREE_PATH" rev-parse --path-format=absolute --git-path info/exclude 2>/dev/null)
+if [ -n "$EXCLUDE_FILE" ]; then
   mkdir -p "$(dirname "$EXCLUDE_FILE")"
-  grep -q "^\.sortie/$" "$EXCLUDE_FILE" 2>/dev/null || echo ".sortie/" >> "$EXCLUDE_FILE"
-  grep -q "^CLAUDE\.md$" "$EXCLUDE_FILE" 2>/dev/null || echo "CLAUDE.md" >> "$EXCLUDE_FILE"
+  grep -qxF ".sortie/"  "$EXCLUDE_FILE" 2>/dev/null || echo ".sortie/"  >> "$EXCLUDE_FILE"
+  grep -qxF "CLAUDE.md" "$EXCLUDE_FILE" 2>/dev/null || echo "CLAUDE.md" >> "$EXCLUDE_FILE"
+fi
+# If CLAUDE.md is tracked on this pilot branch, also hide the per-worktree overwrite.
+if git -C "$WORKTREE_PATH" ls-files --error-unmatch CLAUDE.md >/dev/null 2>&1; then
+  git -C "$WORKTREE_PATH" update-index --skip-worktree CLAUDE.md 2>/dev/null || true
 fi
 
 # ── Init storage DB + fetch briefing ─────────────────────────────────
@@ -232,6 +242,48 @@ python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID
 - Write code, run tests, commit changes, open draft PRs (never ready-for-review)
 - Before implementing any new function, use find_symbol to check if it already exists
 - Signal progress via send-message (not progress.md files)
+
+## Sortie Protocol — Plan First, Then Implement (REQUIRED)
+**Do not write code yet.** The sortie has two phases. Phase 2 is gated by Mini Boss approval of your plan.
+
+### Phase 1 — Plan (no code)
+1. **Read the canonical template as reference**: \`${TEMPLATES_DIR}/plan-template.html\`. Read it via the \`Read\` tool — do NOT copy it into \`.sortie/\`. It's a fully self-contained HTML doc (CSS + mermaid + prism + your section skeleton) that opens directly in any browser via \`file://\` — no server. Use it as the structural source of truth; **Write** your own \`.sortie/plan.html\` from scratch, mirroring the same head/styles/scripts block but filling the \`<article id="doc">\` body with the sortie's actual content (no \`{{PLACEHOLDER}}\` values left, no example CHANGE blocks carried over). No \`.md\` file — HTML is the only source of truth.
+2. **Brainstorm**: invoke \`superpowers:brainstorming\` to clarify intent, surface requirements, and explore approaches. Treat this as an interactive session with Mini Boss via send-message when you hit ambiguity — don't guess.
+3. **Research as you plan**: any time the plan touches a library, framework, API, CLI flag, or SDK shape, invoke the \`exa-search\` skill *during planning*, not after. Cite what you found in the plan (Research Notes section). Do not answer from training data for external claims.
+4. **Reuse Audit (required plan section)**: before proposing any new code, audit what already exists:
+   - \`find_symbol\` (Serena/CGC) for relevant functions, classes, types
+   - \`grep\`/\`rg\` for patterns and call sites
+   - Read the actual implementations, not just filenames
+   Document in the plan: *what exists, what I can extend, what I'd need to write new, and a one-line justification per new thing for why reuse wasn't viable.* No reuse audit → plan rejected.
+5. **Blast Radius (required per CHANGE block)**: for every modified existing symbol in your Ordnance Loadout, compute the caller graph:
+   \`\`\`
+   analyze_code_relationships(query_type='find_all_callers', target='symbolName', context='path/to/file.ts')
+   analyze_code_relationships(query_type='find_all_callees', target='symbolName', context='path/to/file.ts')
+   \`\`\`
+   Render the result as the Mermaid graph the template shows (changed=amber, direct caller=red, transitive=faded red, test coverage=green). Include a risk table. New files get a one-line blast radius. **A modified existing symbol without a blast radius graph → plan rejected.**
+
+   **Known limitations — do not stop at an empty result:**
+   - **CGC misses JSX usage.** Tree-sitter's TS grammar treats \`<Component />\` as \`jsx_element\`, not \`call_expression\`, so CGC returns zero CALL edges for React components. For any TSX symbol used as a JSX element, supplement with:
+     \`\`\`
+     rg -t typescript -t tsx "<ComponentName[\\s/>]"   # JSX usage sites
+     rg -t typescript -t tsx "from ['\\\"].*ComponentName['\\\"]"  # import sites
+     \`\`\`
+     Same applies to HOCs (\`withAuth(Component)\`), \`React.lazy(() => import(...))\`, decorators, and barrel re-exports.
+   - **Serena LSP is slow to initialize.** On a 1k+ file TS project the TS language server takes 30–90s to be query-ready. If \`find_referencing_symbols\` returns empty within 5s of starting your session, wait 30s and retry once before concluding "no callers".
+   - **Cross-package refs**: if the project has sibling packages with their own \`tsconfig.json\`, refs through them are invisible to both CGC and the default Serena LSP. Grep cross-package directories explicitly when relevant.
+6. **Write the plan**: Write \`.sortie/plan.html\` as a fully self-contained HTML doc, modeled on \`${TEMPLATES_DIR}/plan-template.html\`. Mirror the \`<head>\` (styles + Prism + Mermaid CDN), keep the rail / header / classification scaffolding, and replace the \`<article id="doc">\` body with your own content. Use \`superpowers:writing-plans\` discipline. Keep the visible body under ~250 lines — a 1,000-line plan has as many surprises as 1,000 lines of code. The Code Reference Library at the bottom doesn't count.
+7. **Submit for approval**: send the plan path to Mini Boss via send-message and **wait**. Do not start implementing. Mini Boss opens the briefing by running \`open .sortie/plan.html\` (or dragging it into any browser) — no server, no markdown conversion.
+
+### Phase 2 — Implement (only after approval)
+Default to these superpowers skills — invoke whichever fits, even 1% chance:
+- \`superpowers:test-driven-development\` — features and bugfixes
+- \`superpowers:systematic-debugging\` — any bug, test failure, or unexpected behavior
+- \`superpowers:verification-before-completion\` — before claiming work is done
+- \`superpowers:requesting-code-review\` — before opening the draft PR
+
+**Reuse-first remains the rule during implementation.** If you find yourself writing something that already exists, stop and extend the existing thing instead. Update the plan's Reuse Audit if you discover something new mid-flight.
+
+Don't rationalize skipping a skill ("this is simple", "I remember it"). Invoke it.
 
 ## Not Your Job (redirect to Mini Boss)
 - Deploying other agents or managing pilots
@@ -416,7 +468,7 @@ fi
 # Whitelist approach: pilots get only the MCPs they need, not the full global set.
 # Saves ~20-40K tokens of tool definitions at startup.
 PILOT_MCP="${SORTIE_DIR}/pilot-mcp.json"
-WITH_BROWSER="${WITH_BROWSER}" MCP_EXTRAS="${MCP_EXTRAS}" PROJECT_DIR="${PROJECT_DIR}" PILOT_MCP="${PILOT_MCP}" python3 - <<'PYEOF' || echo "MCP:WARNING — pilot-mcp.json generation failed" >&2
+WITH_BROWSER="${WITH_BROWSER}" MCP_EXTRAS="${MCP_EXTRAS}" PROJECT_DIR="${PROJECT_DIR}" PILOT_MCP="${PILOT_MCP}" WORKTREE_PATH="${WORKTREE_PATH}" python3 - <<'PYEOF' || echo "MCP:WARNING — pilot-mcp.json generation failed" >&2
 import json, os
 proj_path = os.path.join(os.environ["PROJECT_DIR"], ".mcp.json")
 glob_path = os.path.expanduser("~/.claude.json")
@@ -424,7 +476,7 @@ proj = json.load(open(proj_path)) if os.path.exists(proj_path) else {}
 glob = json.load(open(glob_path)) if os.path.exists(glob_path) else {}
 proj_servers = proj.get("mcpServers", {})
 glob_servers = glob.get("mcpServers", {})
-allow = ["serena", "CodeGraphContext", "exa"]
+allow = ["serena", "CodeGraphContext", "exa", "clearstream"]
 if os.environ.get("WITH_BROWSER") == "true":
     allow += ["playwright", "stagehand-local"]
 extras_str = os.environ.get("MCP_EXTRAS", "").strip()
@@ -437,6 +489,14 @@ for name in allow:
         out["mcpServers"][name] = proj_servers[name]
     elif name in glob_servers:
         out["mcpServers"][name] = glob_servers[name]
+
+# Per-worktree env mutations — point repo-aware MCPs at this worktree
+# instead of inheriting the main-repo path from the global config.
+wt_path = os.environ.get("WORKTREE_PATH", "")
+if wt_path and "clearstream" in out["mcpServers"]:
+    cs = out["mcpServers"]["clearstream"]
+    cs.setdefault("env", {})["REPO_PATH"] = wt_path
+
 json.dump(out, open(os.environ["PILOT_MCP"], "w"), indent=2)
 print(f"MCP:scoped to {len(out['mcpServers'])} servers: {','.join(out['mcpServers'].keys())}")
 PYEOF
@@ -451,9 +511,14 @@ else
 fi
 
 # ── Build kickoff ────────────────────────────────────────────────────
-KICKOFF="Read .sortie/directive.md for your mission directive. Then check for prior intel: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'. See CLAUDE.md for commands and protocol."
+KICKOFF="Read .sortie/directive.md for your mission directive. Then check for prior intel: python3 '${SCRIPT_DIR}/storage-db.py' get-briefing '${PROJECT_DIR}' '${TICKET_ID}'. See CLAUDE.md for the full sortie protocol. DO NOT WRITE CODE YET. Phase 1 (Plan): Read the canonical plan template at ${TEMPLATES_DIR}/plan-template.html (do NOT copy it — read with the Read tool as structural reference). Write .sortie/plan.html from scratch as a fully self-contained HTML doc matching the template's head/styles/scripts, with this sortie's real content in the <article id='doc'> body. No markdown file — HTML is the only source of truth. Opens in any browser via file:// — no server needed. Invoke superpowers:brainstorming, then superpowers:writing-plans. The plan MUST include a Reuse Audit (find_symbol/grep/CGC) AND a Blast Radius per CHANGE block (use CGC: analyze_code_relationships query_type=find_all_callers,find_all_callees on each modified symbol — render as the Mermaid graph the template shows). MUST verify any library/API/framework choices via the exa-search skill during planning — not after. Send .sortie/plan.html to Mini Boss via send-message and WAIT for approval. Phase 2 (Implement): only after approval. Update .sortie/plan.html checkboxes in-place — single source of truth for progress. Use superpowers throughout (test-driven-development, systematic-debugging, verification-before-completion, requesting-code-review). If a superpowers skill plausibly applies, invoke it."
 
 # ── Write launch script ─────────────────────────────────────────────
+# KICKOFF contains literal apostrophes ("sortie's", "Phase 1 (Plan)") and
+# embedded single-quoted paths used in the suggested command. The whole
+# string gets wrapped in single quotes for the `claude` CLI, so we must
+# escape internal ' as '\'' (close string, literal quote, reopen string).
+KICKOFF_ESC=${KICKOFF//\'/\'\\\'\'}
 LAUNCH_SCRIPT="${SORTIE_DIR}/launch.sh"
 cat > "${LAUNCH_SCRIPT}" << 'LAUNCH_EOF'
 #!/usr/bin/env bash
@@ -470,7 +535,7 @@ cleanup_flight() {
 }
 trap cleanup_flight EXIT
 
-claude --model ${RESOLVED_MODEL} '${KICKOFF}' --strict-mcp-config --mcp-config '${PILOT_MCP}' --disallowedTools ${DISALLOWED}
+claude --model ${RESOLVED_MODEL} '${KICKOFF_ESC}' --strict-mcp-config --mcp-config '${PILOT_MCP}' --disallowedTools ${DISALLOWED}
 LAUNCH_EOF2
 chmod +x "${LAUNCH_SCRIPT}"
 

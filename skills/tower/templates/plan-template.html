@@ -1,0 +1,1423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PRE-FLIGHT BRIEFING</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<style>
+  :root {
+    --bg: #0a0d10;
+    --surface: #14181d;
+    --raised: #1a2025;
+    --border: #2a3138;
+    --border-strong: #3a434c;
+    --text: #e8e4d8;
+    --dim: #8d959e;
+    --amber: #ffb627;
+    --amber-dim: #c98e1c;
+    --red: #ff4a3a;
+    --red-deep: #7a2a25;
+    --green: #3ddc97;
+    --display: "Big Shoulders Stencil Display", Impact, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Subtle grid + scanline atmosphere */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      linear-gradient(rgba(255,182,39,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,182,39,0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0) 2px,
+      rgba(255,255,255,0.012) 3px,
+      rgba(0,0,0,0) 4px
+    );
+  }
+
+  /* Classification banner */
+  .classification {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--amber); color: #000;
+    font-family: var(--display); font-weight: 900;
+    letter-spacing: 0.2em; font-size: 13px;
+    padding: 6px 24px; text-align: center;
+    border-bottom: 2px solid #000;
+    text-transform: uppercase;
+  }
+  .classification.awaiting { animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse {
+    0%, 100% { background: var(--amber); }
+    50%      { background: #ffd56e; }
+  }
+
+  /* Layout */
+  .shell {
+    max-width: 1240px; margin: 0 auto; padding: 32px 24px 120px;
+    display: grid; grid-template-columns: 220px 1fr; gap: 40px;
+    position: relative; z-index: 1;
+  }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    .rail { position: static !important; }
+  }
+
+  /* Sidebar rail */
+  .rail {
+    position: sticky; top: 56px; align-self: start;
+    font-size: 12px;
+    border-right: 1px dashed var(--border);
+    padding-right: 16px;
+  }
+  .rail h4 {
+    font-family: var(--display); letter-spacing: 0.18em;
+    font-size: 11px; color: var(--amber); margin: 0 0 10px;
+    text-transform: uppercase;
+  }
+  .rail .meta { display: grid; grid-template-columns: 70px 1fr; gap: 4px 12px; margin-bottom: 24px; }
+  .rail .meta dt { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em; }
+  .rail .meta dd { margin: 0; color: var(--text); word-break: break-all; }
+  .rail .status {
+    margin-bottom: 24px; padding: 8px 10px;
+    background: var(--raised); border-left: 3px solid var(--amber);
+    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  }
+  .rail .status.approved { border-left-color: var(--green); color: var(--green); }
+  .rail .status.rejected { border-left-color: var(--red); color: var(--red); }
+  .rail ol {
+    list-style: none; padding: 0; margin: 0;
+    counter-reset: toc;
+  }
+  .rail ol li {
+    counter-increment: toc;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+  .rail ol li::before {
+    content: counter(toc, decimal-leading-zero);
+    color: var(--amber-dim); margin-right: 8px; font-weight: 700;
+  }
+  .rail ol li a { color: var(--text); text-decoration: none; }
+  .rail ol li a:hover { color: var(--amber); }
+
+  /* Header block */
+  .header {
+    border: 1px solid var(--border-strong);
+    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+    padding: 24px 28px; margin-bottom: 32px;
+    position: relative; overflow: hidden;
+  }
+  .header::before {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
+    background: var(--amber);
+  }
+  .header .ticket-row {
+    font-family: var(--display); font-size: 13px; letter-spacing: 0.24em;
+    color: var(--amber); text-transform: uppercase; margin-bottom: 4px;
+  }
+  .header h1 {
+    font-family: var(--display); font-weight: 900;
+    font-size: clamp(28px, 4vw, 44px); line-height: 1.05;
+    margin: 0 0 12px; letter-spacing: 0.02em;
+  }
+  .header .sub {
+    font-size: 12px; color: var(--dim); letter-spacing: 0.05em;
+  }
+
+  /* Markdown rendered content */
+  .doc { font-size: 14px; }
+  .doc h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: 26px; letter-spacing: 0.04em;
+    color: var(--text); margin: 48px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  .doc h2::before {
+    content: ""; width: 12px; height: 12px;
+    background: var(--amber); display: inline-block;
+    transform: rotate(45deg);
+  }
+  .doc h3 {
+    font-family: var(--display); font-weight: 700;
+    font-size: 17px; letter-spacing: 0.12em;
+    margin: 28px 0 12px; color: var(--amber);
+    text-transform: uppercase;
+  }
+  .doc h4 {
+    font-family: var(--mono); font-weight: 700;
+    font-size: 13px; letter-spacing: 0.05em;
+    margin: 20px 0 8px; color: var(--text);
+    text-transform: uppercase;
+  }
+  .doc p { margin: 8px 0 14px; }
+  .doc a { color: var(--amber); text-decoration: underline dotted; text-underline-offset: 3px; }
+  .doc a:hover { color: var(--text); background: var(--amber); padding: 0 2px; }
+  .doc ul, .doc ol { padding-left: 22px; margin: 8px 0 16px; }
+  .doc li { margin: 4px 0; }
+  .doc strong { color: var(--amber); font-weight: 700; }
+  .doc em { color: var(--text); font-style: italic; }
+  .doc blockquote {
+    margin: 16px 0; padding: 8px 16px;
+    border-left: 3px solid var(--amber);
+    background: var(--surface); color: var(--dim);
+    font-size: 13px;
+  }
+
+  /* Tables */
+  .doc table {
+    width: 100%; border-collapse: collapse; margin: 12px 0 20px;
+    font-size: 12px;
+  }
+  .doc th, .doc td {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    text-align: left; vertical-align: top;
+  }
+  .doc th {
+    background: var(--raised); color: var(--amber);
+    font-family: var(--display); letter-spacing: 0.1em;
+    text-transform: uppercase; font-size: 11px;
+  }
+  .doc tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+
+  /* Inline code */
+  .doc code:not(pre code) {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--raised); color: var(--amber);
+    padding: 1px 6px; border: 1px solid var(--border);
+    border-radius: 2px;
+  }
+
+  /* Code blocks */
+  .doc pre {
+    margin: 12px 0; padding: 16px;
+    background: #0d1216 !important;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber-dim);
+    overflow-x: auto; font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .doc pre code { font-family: var(--mono) !important; }
+
+  /* Diff blocks — make them LOUD */
+  .doc pre.language-diff,
+  .doc pre[class*="language-diff"] {
+    border-left: 4px solid var(--amber);
+    background: #0d1216 !important;
+  }
+  .token.deleted { background: rgba(255,74,58,0.12) !important; color: #ff8a7e !important; }
+  .token.inserted { background: rgba(61,220,151,0.12) !important; color: #6ee5ae !important; }
+  .token.deleted::before { content: ""; }
+  .token.inserted::before { content: ""; }
+
+  /* CHANGE block prominence — h3 starting with CHANGE gets framing */
+  .change-block {
+    margin: 28px 0;
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--amber);
+    background: linear-gradient(180deg, var(--surface) 0%, rgba(20,24,29,0.4) 100%);
+    padding: 16px 20px 20px;
+    position: relative;
+  }
+  .change-block::before {
+    content: attr(data-tag);
+    position: absolute; top: -10px; left: 16px;
+    background: var(--amber); color: #000;
+    font-family: var(--display); font-weight: 900;
+    font-size: 11px; letter-spacing: 0.2em;
+    padding: 2px 10px; text-transform: uppercase;
+  }
+  .change-block h3 {
+    margin-top: 8px;
+    color: var(--text); font-size: 14px;
+    letter-spacing: 0.04em;
+  }
+  .change-block h3 code {
+    font-size: 14px; background: transparent; border: none;
+    color: var(--amber); padding: 0;
+  }
+
+  /* Mermaid container (architecture / sequence diagrams — default cockpit dark) */
+  .mermaid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px; margin: 16px 0;
+    text-align: center; overflow-x: auto;
+  }
+
+  /* Blast Radius — MFD chart panel.
+     Scoped to .change-block .mermaid so it ONLY hits the per-CHANGE diagrams,
+     not the architecture/sequence ones at the top of the plan. */
+  .change-block .mermaid,
+  .change-block .ba-widget .mermaid {
+    background:
+      /* Compass rose (top-right) */
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' opacity='0.35'><g fill='none' stroke='%23ff6ec7' stroke-width='0.6'><circle cx='50' cy='50' r='28'/><circle cx='50' cy='50' r='14'/><line x1='50' y1='8' x2='50' y2='92'/><line x1='8' y1='50' x2='92' y2='50'/><line x1='20' y1='20' x2='80' y2='80' stroke-dasharray='1.5,1.5'/><line x1='80' y1='20' x2='20' y2='80' stroke-dasharray='1.5,1.5'/></g><g fill='%23ff6ec7' font-family='monospace' font-size='8' font-weight='bold' text-anchor='middle'><text x='50' y='14'>N</text><text x='86' y='53'>E</text><text x='50' y='95'>S</text><text x='14' y='53'>W</text></g></svg>") top 8px right 8px / 64px 64px no-repeat,
+      /* Range rings + cardinal cross underlay */
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' preserveAspectRatio='xMidYMid slice'><g fill='none' stroke='%23ff6ec7' stroke-opacity='0.14' stroke-width='0.5' stroke-dasharray='2,3'><circle cx='100' cy='100' r='40'/><circle cx='100' cy='100' r='70'/><circle cx='100' cy='100' r='95'/></g><g stroke='%23ff6ec7' stroke-opacity='0.08' stroke-width='0.3'><line x1='100' y1='5' x2='100' y2='195'/><line x1='5' y1='100' x2='195' y2='100'/></g></svg>") center / cover no-repeat,
+      /* Base — MFD night mode dark blue-gray */
+      linear-gradient(180deg, #0e1820 0%, #0a1014 100%);
+    border: 1px solid #2a3540;
+    border-left: 3px solid #ff6ec7;
+    padding: 32px 24px 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Corner graticule crosshairs (top-left, bottom-right) */
+  .change-block .mermaid::before,
+  .change-block .mermaid::after {
+    content: "";
+    position: absolute;
+    width: 16px; height: 16px;
+    background:
+      linear-gradient(#ff6ec7, #ff6ec7) center/8px 1px no-repeat,
+      linear-gradient(#ff6ec7, #ff6ec7) center/1px 8px no-repeat;
+    opacity: 0.5;
+  }
+  .change-block .mermaid::before { top: 8px; left: 8px; }
+  .change-block .mermaid::after  { bottom: 8px; right: 8px; }
+
+  /* MFD chart panel — make the rendered Mermaid SVG legible against the new bg */
+  .change-block .mermaid svg {
+    position: relative; z-index: 1;
+    background: transparent !important;
+  }
+  /* Subgraph cluster backgrounds — make them feel like MOA boundary regions */
+  .change-block .mermaid svg .cluster rect {
+    fill: rgba(255, 110, 199, 0.05) !important;
+    stroke: rgba(255, 110, 199, 0.4) !important;
+    stroke-width: 1.2 !important;
+    stroke-dasharray: 4 3 !important;
+  }
+  .change-block .mermaid svg .cluster-label foreignObject div,
+  .change-block .mermaid svg .cluster-label .nodeLabel {
+    color: #ff6ec7 !important;
+    font-family: "JetBrains Mono", monospace !important;
+    letter-spacing: 0.08em !important;
+  }
+
+  /* Before/After toggle widget */
+  .ba-widget {
+    margin: 16px 0;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .ba-controls {
+    display: flex; align-items: stretch;
+    border-bottom: 1px solid var(--border);
+    background: var(--raised);
+  }
+  .ba-controls .ba-label {
+    padding: 8px 16px;
+    font-family: var(--display); letter-spacing: 0.2em;
+    font-size: 11px; color: var(--amber);
+    text-transform: uppercase;
+    border-right: 1px solid var(--border);
+    display: flex; align-items: center;
+  }
+  .ba-controls .ba-tabs { display: flex; flex: 1; }
+  .ba-tab {
+    flex: 1; padding: 8px 16px;
+    background: transparent; color: var(--dim);
+    border: none; border-right: 1px solid var(--border);
+    font-family: var(--display); font-weight: 700;
+    letter-spacing: 0.18em; font-size: 12px;
+    text-transform: uppercase; cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .ba-tab:last-child { border-right: none; }
+  .ba-tab:hover { color: var(--text); background: rgba(255,182,39,0.06); }
+  .ba-tab.active {
+    background: var(--amber); color: #000;
+  }
+  .ba-tab .ba-marker {
+    display: inline-block; width: 8px; height: 8px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .ba-tab[data-state="before"] .ba-marker { background: var(--red); }
+  .ba-tab[data-state="after"] .ba-marker { background: var(--green); }
+  .ba-tab.active .ba-marker { background: #000; }
+
+  .ba-panels { position: relative; }
+  .ba-panel { display: none; }
+  .ba-panel.active { display: block; }
+  .ba-panel > .mermaid {
+    margin: 0; border: none;
+  }
+
+  /* Approval row */
+  .approval-banner {
+    margin-top: 40px; padding: 16px 20px;
+    background: var(--raised); border: 1px solid var(--amber);
+    text-align: center;
+    font-family: var(--display); letter-spacing: 0.2em;
+    text-transform: uppercase; font-size: 14px;
+    color: var(--amber);
+  }
+
+  /* Loading state */
+  .loading {
+    text-align: center; padding: 80px 20px;
+    color: var(--dim); font-family: var(--display);
+    letter-spacing: 0.2em; text-transform: uppercase;
+  }
+  .loading::after {
+    content: "_"; display: inline-block; margin-left: 4px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* Drop zone (file:// fallback) */
+  .dropzone {
+    margin: 24px 0; padding: 64px 24px;
+    border: 2px dashed var(--amber);
+    background: linear-gradient(180deg, rgba(255,182,39,0.04) 0%, transparent 100%);
+    text-align: center; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    position: relative;
+  }
+  .dropzone.over {
+    background: rgba(255,182,39,0.12);
+    border-color: var(--text);
+  }
+  .dropzone h3 {
+    font-family: var(--display); font-weight: 900;
+    letter-spacing: 0.2em; font-size: 18px;
+    color: var(--amber); margin: 0 0 12px;
+    text-transform: uppercase;
+  }
+  .dropzone p {
+    color: var(--dim); margin: 4px 0; font-size: 13px;
+  }
+  .dropzone .or {
+    display: inline-block; margin: 12px 0;
+    color: var(--dim); letter-spacing: 0.3em;
+    font-family: var(--display);
+  }
+  .dropzone button {
+    margin-top: 12px; padding: 8px 24px;
+    background: var(--amber); color: #000; border: none;
+    font-family: var(--display); font-weight: 900;
+    letter-spacing: 0.18em; font-size: 12px;
+    text-transform: uppercase; cursor: pointer;
+  }
+  .dropzone button:hover { background: #ffd56e; }
+  .dropzone code {
+    background: var(--raised); color: var(--amber);
+    padding: 1px 6px; border: 1px solid var(--border);
+    border-radius: 2px; font-family: var(--mono); font-size: 11px;
+  }
+
+  /* Clickable code references (resolved against Code Reference Library) */
+  .doc code.code-ref {
+    cursor: pointer;
+    border-color: var(--amber) !important;
+    color: var(--amber) !important;
+    position: relative; padding-right: 16px !important;
+  }
+  .doc code.code-ref::after {
+    content: "⊕"; position: absolute;
+    right: 4px; top: 50%; transform: translateY(-50%);
+    font-size: 9px; color: var(--amber); opacity: 0.7;
+  }
+  .doc code.code-ref:hover {
+    background: var(--amber) !important; color: #000 !important;
+  }
+  .doc code.code-ref:hover::after { color: #000; opacity: 1; }
+
+  /* Code Reference Library section — shown at end of doc, low-key.
+     Each REF: heading becomes a faint anchor; the actual code blocks
+     stay hidden from the main flow since the drawer renders them. */
+  .doc .ref-library-collapsed {
+    margin: 32px 0 16px; padding: 12px 16px;
+    background: var(--surface); border: 1px dashed var(--border);
+    font-size: 11px; color: var(--dim);
+    text-align: center; letter-spacing: 0.08em;
+  }
+  .doc .ref-library-collapsed strong { color: var(--amber); }
+
+  /* Side drawer — code readout instrument */
+  .code-drawer {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(720px, 92vw); z-index: 20;
+    background: linear-gradient(180deg, #0e1820 0%, #0a1014 100%);
+    border-left: 2px solid var(--amber);
+    box-shadow: -8px 0 24px rgba(0,0,0,0.6);
+    transform: translateX(100%);
+    transition: transform 0.22s ease-out;
+    display: flex; flex-direction: column;
+    font-family: var(--mono);
+  }
+  .code-drawer.open { transform: translateX(0); }
+  .code-drawer-header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    background: var(--raised);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .code-drawer-header .cd-label {
+    font-family: var(--display); letter-spacing: 0.2em;
+    font-size: 11px; color: var(--amber);
+    text-transform: uppercase;
+  }
+  .code-drawer-header .cd-name {
+    font-family: var(--mono); font-size: 14px; font-weight: 700;
+    color: var(--text); flex: 1; word-break: break-all;
+  }
+  .code-drawer-header .cd-close {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--dim); cursor: pointer;
+    width: 28px; height: 28px; font-size: 16px;
+    line-height: 1;
+  }
+  .code-drawer-header .cd-close:hover {
+    color: var(--red); border-color: var(--red);
+  }
+  .code-drawer-loc {
+    padding: 6px 20px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px; color: var(--dim);
+    font-family: var(--mono);
+  }
+  .code-drawer-loc code {
+    background: transparent !important; border: none !important;
+    color: var(--amber) !important; padding: 0 !important;
+  }
+  .code-drawer-tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .code-drawer-tab {
+    flex: 1; padding: 8px 16px;
+    background: transparent; color: var(--dim);
+    border: none; border-right: 1px solid var(--border);
+    font-family: var(--display); letter-spacing: 0.18em;
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; cursor: pointer;
+  }
+  .code-drawer-tab:last-child { border-right: none; }
+  .code-drawer-tab.active {
+    background: var(--amber); color: #000;
+  }
+  .code-drawer-tab:not(.active):hover {
+    color: var(--text); background: rgba(255,182,39,0.08);
+  }
+  .code-drawer-body {
+    flex: 1; overflow: auto;
+    padding: 0; background: #0a0d10;
+  }
+  .code-drawer-body pre {
+    margin: 0; border: none; border-radius: 0;
+    padding: 20px; background: #0a0d10 !important;
+    font-size: 13px;
+  }
+
+  /* Unified diff view — AFTER tab when paired blocks exist */
+  .code-diff {
+    background: #0a0d10 !important;
+    padding: 20px !important;
+    margin: 0 !important; border: none !important;
+    font-family: var(--mono) !important;
+    font-size: 12.5px; line-height: 1.55;
+    overflow-x: auto;
+  }
+  .code-diff .line {
+    display: block;
+    padding: 1px 0 1px 0;
+    white-space: pre;
+  }
+  .code-diff .gutter {
+    display: inline-block; width: 28px;
+    text-align: center; color: var(--dim);
+    user-select: none; opacity: 0.7;
+    border-right: 1px solid var(--border);
+    margin-right: 12px;
+  }
+  .code-diff .line-ins {
+    background: rgba(92, 184, 92, 0.10);
+    border-left: 2px solid var(--green);
+    margin-left: -2px;
+  }
+  .code-diff .line-ins .gutter {
+    color: var(--green); font-weight: bold; opacity: 1;
+  }
+  .code-diff .line-ins .text { color: #8ee5a9; }
+  .code-diff .line-del {
+    background: rgba(255, 74, 58, 0.10);
+    border-left: 2px solid var(--red);
+    margin-left: -2px;
+  }
+  .code-diff .line-del .gutter {
+    color: var(--red); font-weight: bold; opacity: 1;
+  }
+  .code-diff .line-del .text { color: #ff9a91; }
+  .code-diff .line-ctx { padding-left: 2px; }
+  .code-diff .line-ctx .text { color: var(--text); opacity: 0.55; }
+
+  .code-drawer-backdrop {
+    position: fixed; inset: 0; z-index: 19;
+    background: rgba(0,0,0,0.4); opacity: 0;
+    pointer-events: none; transition: opacity 0.22s;
+  }
+  .code-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  /* "Reload" pill — top-right after a plan is loaded */
+  .reload-pill {
+    position: fixed; top: 40px; right: 24px; z-index: 9;
+    padding: 4px 12px; font-family: var(--display);
+    letter-spacing: 0.18em; font-size: 10px;
+    background: var(--raised); color: var(--dim);
+    border: 1px solid var(--border); cursor: pointer;
+    text-transform: uppercase;
+  }
+  .reload-pill:hover { color: var(--amber); border-color: var(--amber); }
+  .reload-pill.hidden { display: none; }
+
+  /* Error state */
+  .error {
+    margin: 40px 0; padding: 24px;
+    background: rgba(255,74,58,0.06);
+    border: 1px solid var(--red);
+    border-left: 4px solid var(--red);
+    color: var(--red);
+  }
+  .error h3 { color: var(--red); margin-top: 0; }
+  .error pre {
+    background: transparent !important;
+    border: none !important; padding: 0 !important;
+    color: var(--text); font-size: 12px;
+  }
+
+  /* Section reveal */
+  .doc > h2, .doc > p, .doc > ul, .doc > ol, .doc > table,
+  .doc > pre, .doc > .change-block, .doc > .mermaid {
+    animation: fadeIn 0.4s ease-out backwards;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<div class="classification awaiting" id="classification" data-status="AWAITING APPROVAL">PRE-FLIGHT BRIEFING · RESTRICTED · AWAITING APPROVAL</div>
+
+<!-- Code drawer (slides in from the right when a code-ref is clicked) -->
+<div class="code-drawer-backdrop" id="code-drawer-backdrop"></div>
+<aside class="code-drawer" id="code-drawer" aria-hidden="true">
+  <div class="code-drawer-header">
+    <span class="cd-label">Symbol</span>
+    <span class="cd-name" id="cd-name">—</span>
+    <button class="cd-close" id="cd-close" type="button" aria-label="Close">✕</button>
+  </div>
+  <div class="code-drawer-loc" id="cd-loc">—</div>
+  <div class="code-drawer-tabs" id="cd-tabs"></div>
+  <div class="code-drawer-body" id="cd-body"></div>
+</aside>
+
+
+<div class="shell">
+
+  <aside class="rail">
+    <h4>Sortie</h4>
+    <dl class="meta" id="meta">
+      <dt>Ticket</dt><dd id="m-ticket">{{TICKET_ID}}</dd>
+      <dt>Callsign</dt><dd id="m-callsign">{{CALLSIGN}}</dd>
+      <dt>Model</dt><dd id="m-model">{{MODEL}}</dd>
+      <dt>Launch</dt><dd id="m-launched">{{LAUNCHED_AT}}</dd>
+    </dl>
+
+    <div class="status awaiting" id="rail-status">Awaiting Approval</div>
+
+    <h4>Index</h4>
+    <ol id="toc"></ol>
+  </aside>
+
+  <main>
+    <div class="header">
+      <div class="ticket-row" id="h-ticket">{{TICKET_ID}}</div>
+      <h1 id="h-title">{{MISSION_TITLE}}</h1>
+      <div class="sub" id="h-sub">{{CALLSIGN}} · {{MODEL}} · {{LAUNCHED_AT}}</div>
+    </div>
+
+    <article class="doc" id="doc">
+      <!--
+        SORTIE PLAN — pilot fills this in BEFORE writing any code.
+        Every section is REQUIRED. Delete the example content but keep the
+        section skeleton. Keep total length under ~250 visible lines
+        (Reference Library at the bottom doesn't count). A 1,000-line plan
+        has as many surprises as 1,000 lines of code (Horthy, 2026).
+      -->
+
+      <h2>1. Mission Directive</h2>
+      <!-- One paragraph. User-visible outcome. Not "refactor X" — "users can now Y because Z". -->
+      <p>{{MISSION_DIRECTIVE}}</p>
+
+      <h2>2. Reuse Audit</h2>
+      <!-- REQUIRED. Existing symbols/files you can extend. For every new thing,
+           justify why reuse wasn't viable. No reuse audit = plan rejected. -->
+
+      <h3>Existing code I can extend</h3>
+      <table>
+        <thead>
+          <tr><th>Symbol / File</th><th>Location</th><th>Reuse Strategy</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>existingFn</code></td><td><code>src/foo/bar.ts:L42</code></td><td>Call from new handler, no changes needed</td></tr>
+          <tr><td><code>BaseModel</code></td><td><code>src/lib/models.ts:L8</code></td><td>Subclass for new entity</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Files I read to verify the above</h3>
+      <!-- 3+ files you actually opened. Plan-reading is not a substitute for code-reading. -->
+      <ul>
+        <li><code>src/foo/bar.ts</code> — confirmed <code>existingFn</code> signature matches required shape</li>
+        <li><code>src/lib/models.ts</code> — confirmed <code>BaseModel</code> exports the hooks I need</li>
+        <li>…</li>
+      </ul>
+
+      <h3>New code required (with justification)</h3>
+      <table>
+        <thead>
+          <tr><th>Proposed New Symbol</th><th>Why reuse wasn't viable</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>NewHandlerThing</code></td><td>No existing handler covers this auth path; closest is <code>OldHandler</code> but it assumes session cookies, which we don't have here</td></tr>
+        </tbody>
+      </table>
+
+      <h2>3. Proposed Architecture</h2>
+      <!-- Mermaid diagram of the system shape AFTER this change.
+           Required when control flow or module boundaries change. -->
+      <pre><code class="language-mermaid">flowchart LR
+    User([User])
+    API[API Route]
+    Handler[NewHandlerThing]
+    Existing[existingFn]
+    DB[(Database)]
+
+    User --&gt; API
+    API --&gt; Handler
+    Handler --&gt; Existing
+    Existing --&gt; DB
+
+    classDef new fill:#ffb627,stroke:#0a0d10,color:#0a0d10,font-weight:bold
+    classDef existing fill:#1a1f24,stroke:#e8e4d8,color:#e8e4d8
+    class Handler new
+    class Existing,API,DB existing
+</code></pre>
+      <p><strong>Legend:</strong> amber = new, charcoal = existing.</p>
+
+      <h2>4. Ordnance Loadout — Code Changes</h2>
+      <!-- Every code change goes here as a CHANGE NN block. The diff is the spec.
+           Every CHANGE block REQUIRES a Blast Radius subsection — see CHANGE 02
+           for the canonical example with paired %% BEFORE / %% AFTER mermaid. -->
+
+      <h3>CHANGE 01 — <code>src/api/handler.ts:L1-L40</code></h3>
+      <p><strong>Kind:</strong> new file<br>
+         <strong>Reuses:</strong> <code>existingFn</code> (<code>src/foo/bar.ts:L42</code>), <code>BaseModel</code> (<code>src/lib/models.ts:L8</code>)<br>
+         <strong>Why:</strong> Entry point for the new auth path. Delegates all real work to reused symbols.</p>
+      <pre><code class="language-diff">+ import { existingFn } from '../foo/bar';
++ import { BaseModel } from '../lib/models';
++
++ export async function newHandler(req: Request): Promise&lt;Response&gt; {
++   const input = await req.json();
++   const result = await existingFn(input);
++   return Response.json(result);
++ }
+</code></pre>
+      <p><strong>Blast Radius:</strong> New file — no existing callers. Will be imported by <code>CHANGE 03</code> (<code>src/api/routes.ts</code>). No tests yet — added in implementation phase.</p>
+
+      <h3>CHANGE 02 — <code>src/foo/bar.ts:L42-L58</code></h3>
+      <p><strong>Kind:</strong> modify (signature change with default param, backward-compatible)<br>
+         <strong>Reuses:</strong> existing function body<br>
+         <strong>Why:</strong> Add optional <code>mode</code> parameter to support the new path without breaking old callers.</p>
+      <pre><code class="language-diff">- export function existingFn(input: Input): Result {
+-   return process(input);
++ export function existingFn(input: Input, mode: Mode = 'legacy'): Result {
++   return process(input, mode);
+  }
+</code></pre>
+
+      <p><strong>Blast Radius — TACAN PLOT (Before / After):</strong></p>
+      <!--
+        REQUIRED for every modified existing symbol.
+        Write TWO consecutive mermaid blocks. First line of each must be:
+          %% BEFORE     ← current call graph
+          %% AFTER      ← projected post-strike state
+        The viewer auto-pairs them into a tabbed widget defaulting to AFTER.
+        Generate with CGC:
+          analyze_code_relationships(query_type='find_all_callers', target='existingFn', context='src/foo/bar.ts')
+          analyze_code_relationships(query_type='find_all_callees', target='existingFn', context='src/foo/bar.ts')
+      -->
+      <pre><code class="language-mermaid">%% BEFORE
+flowchart LR
+    station(["★ existingFn&lt;br/&gt;&lt;sub&gt;BRG src/foo/bar.ts:42&lt;/sub&gt;"]):::station
+
+    subgraph DIRECT [" ── PRIMARY · DIRECT CALLERS ── "]
+        direction TB
+        c1[/"legacyHandler&lt;br/&gt;&lt;sub&gt;BRG src/api/legacy.ts:18&lt;/sub&gt;"/]:::direct
+        c3[/"runCli&lt;br/&gt;&lt;sub&gt;BRG src/cli/run.ts:24&lt;/sub&gt;"/]:::direct
+    end
+
+    subgraph SECONDARY [" ── SECONDARY · TRANSITIVE ── "]
+        direction TB
+        t1(("router&lt;br/&gt;&lt;sub&gt;src/api/routes.ts:12&lt;/sub&gt;")):::transitive
+        t2(("main&lt;br/&gt;&lt;sub&gt;src/cli/index.ts:1&lt;/sub&gt;")):::transitive
+    end
+
+    subgraph FRIENDLIES [" ── FRIENDLIES · TEST COVERAGE ── "]
+        direction TB
+        f1{{"bar.test.ts&lt;br/&gt;&lt;sub&gt;covers L42-L58&lt;/sub&gt;"}}:::test
+    end
+
+    c1 --&gt; station
+    c3 --&gt; station
+    t1 --&gt; c1
+    t2 --&gt; c3
+    f1 -. covers .-&gt; station
+    f1 -. covers .-&gt; c1
+
+    classDef station fill:#fce75d,stroke:#0a0d10,color:#0a0d10,stroke-width:3px,font-weight:bold
+    classDef direct fill:#ff6ec7,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
+    classDef transitive fill:#5a2748,stroke:#ff6ec7,color:#ff6ec7,stroke-dasharray: 4 2
+    classDef test fill:#0d2a1f,stroke:#7ac4e8,color:#7ac4e8,stroke-dasharray: 5 5
+</code></pre>
+
+      <pre><code class="language-mermaid">%% AFTER
+flowchart LR
+    station(["★ existingFn(input, mode)&lt;br/&gt;&lt;sub&gt;BRG src/foo/bar.ts:42&lt;/sub&gt;"]):::station
+
+    subgraph DIRECT [" ── PRIMARY · DIRECT CALLERS ── "]
+        direction TB
+        c1[/"legacyHandler&lt;br/&gt;&lt;sub&gt;BRG src/api/legacy.ts:18&lt;/sub&gt;"/]:::direct
+        c2[/"newHandler ◆ NEW&lt;br/&gt;&lt;sub&gt;BRG src/api/handler.ts:8&lt;/sub&gt;"/]:::new
+        c3[/"runCli&lt;br/&gt;&lt;sub&gt;BRG src/cli/run.ts:24&lt;/sub&gt;"/]:::direct
+    end
+
+    subgraph SECONDARY [" ── SECONDARY · TRANSITIVE ── "]
+        direction TB
+        t1(("router&lt;br/&gt;&lt;sub&gt;src/api/routes.ts:12&lt;/sub&gt;")):::transitive
+        t2(("main&lt;br/&gt;&lt;sub&gt;src/cli/index.ts:1&lt;/sub&gt;")):::transitive
+    end
+
+    subgraph FRIENDLIES [" ── FRIENDLIES · TEST COVERAGE ── "]
+        direction TB
+        f1{{"bar.test.ts&lt;br/&gt;&lt;sub&gt;covers L42-L58&lt;/sub&gt;"}}:::test
+        f2{{"runCli.test.ts ◆ NEW&lt;br/&gt;&lt;sub&gt;covers L24&lt;/sub&gt;"}}:::newtest
+    end
+
+    c1 --&gt; station
+    c2 --&gt; station
+    c3 --&gt; station
+    t1 --&gt; c1
+    t1 --&gt; c2
+    t2 --&gt; c3
+    f1 -. covers .-&gt; station
+    f1 -. covers .-&gt; c1
+    f2 -. covers .-&gt; c3
+
+    classDef station fill:#fce75d,stroke:#0a0d10,color:#0a0d10,stroke-width:3px,font-weight:bold
+    classDef direct fill:#ff6ec7,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
+    classDef new fill:#5cb85c,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
+    classDef transitive fill:#5a2748,stroke:#ff6ec7,color:#ff6ec7,stroke-dasharray: 4 2
+    classDef test fill:#0d2a1f,stroke:#7ac4e8,color:#7ac4e8,stroke-dasharray: 5 5
+    classDef newtest fill:#0d2a1f,stroke:#5cb85c,color:#5cb85c,stroke-width:2px
+</code></pre>
+
+      <p><strong>Contact Report:</strong></p>
+      <table>
+        <thead>
+          <tr><th>Contact</th><th>Bearing</th><th>Range</th><th>Risk</th><th>Test Reach</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>legacyHandler</code></td><td><code>src/api/legacy.ts:18</code></td><td>DIRECT</td><td>LOW</td><td>✓ <code>bar.test.ts</code></td><td>Default-param keeps it green</td></tr>
+          <tr><td><code>newHandler</code> ◆NEW</td><td><code>src/api/handler.ts:8</code></td><td>DIRECT</td><td>LOW</td><td>✗ (new)</td><td>Will pass <code>'new-mode'</code> explicitly</td></tr>
+          <tr><td><code>runCli</code></td><td><code>src/cli/run.ts:24</code></td><td>DIRECT</td><td>MED</td><td>✗ no test</td><td><strong>Add regression test in implementation phase</strong></td></tr>
+          <tr><td><code>router</code></td><td><code>src/api/routes.ts:12</code></td><td>TRANSITIVE</td><td>LOW</td><td>✓ via legacy</td><td>No direct call, fanout only</td></tr>
+          <tr><td><code>main</code></td><td><code>src/cli/index.ts:1</code></td><td>TRANSITIVE</td><td>LOW</td><td>✗ no test</td><td>Inherits runCli risk</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Net blast radius:</strong> 3 direct contacts, 2 transitive, 1 friendly cover. <code>runCli</code> flagged — missing test coverage. Backward-compatible via default param. No call sites use <code>arguments.length</code> or <code>.length</code> introspection (grepped — clean).</p>
+
+      <h3>CHANGE 03 — <code>src/api/routes.ts:L12</code></h3>
+      <p><strong>Kind:</strong> modify<br>
+         <strong>Reuses:</strong> existing route table<br>
+         <strong>Why:</strong> Wire the new handler into the router.</p>
+      <pre><code class="language-diff">  const routes = {
+    '/legacy': legacyHandler,
++   '/new': newHandler,
+  };
+</code></pre>
+      <p><strong>Blast Radius:</strong> Adds a new route key. No existing key changed. Direct dependents: <code>httpServer</code> (<code>src/api/server.ts:L8</code>) iterates <code>routes</code>. No behavioral change to existing paths. Risk: LOW.</p>
+      <!-- Repeat CHANGE NN blocks until every line you'll touch is accounted for.
+           Every modified existing symbol MUST have the full mermaid+table treatment.
+           If you can't describe a change as a diff, you don't understand it yet. -->
+
+      <h2>5. Sequence / Control Flow</h2>
+      <!-- Optional mermaid sequence diagram for async/multi-step work. -->
+      <pre><code class="language-mermaid">sequenceDiagram
+    participant U as User
+    participant H as newHandler
+    participant E as existingFn
+    participant D as DB
+
+    U-&gt;&gt;H: POST /new
+    H-&gt;&gt;E: existingFn(input, 'new-mode')
+    E-&gt;&gt;D: query
+    D--&gt;&gt;E: rows
+    E--&gt;&gt;H: result
+    H--&gt;&gt;U: 200 OK
+</code></pre>
+
+      <h2>6. Execution Checklist</h2>
+      <!-- SINGLE SOURCE OF TRUTH for progress. Flip ☐ → ☑ as you execute.
+           No separate progress.md file. -->
+      <ul>
+        <li>☐ CHANGE 01 — write <code>src/api/handler.ts</code></li>
+        <li>☐ CHANGE 02 — modify <code>src/foo/bar.ts</code> signature</li>
+        <li>☐ CHANGE 03 — wire route in <code>src/api/routes.ts</code></li>
+        <li>☐ Write unit tests for <code>newHandler</code> (TDD — red first)</li>
+        <li>☐ Verify <code>existingFn</code> legacy callers still pass</li>
+        <li>☐ Run typecheck + lint + full test suite</li>
+        <li>☐ Open draft PR</li>
+        <li>☐ Request code review</li>
+      </ul>
+
+      <h2>7. Research Notes</h2>
+      <!-- Every external claim gets a citation. Quoted span ≤15 words.
+           If you can't quote it, you can't claim it. -->
+      <h3>External</h3>
+      <ul>
+        <li><strong>Claim:</strong> Next.js 15 supports <code>Promise&lt;Params&gt;</code> in route handler signatures.<br>
+            <strong>Source:</strong> <a href="https://nextjs.org/docs/app/api-reference/file-conventions/route#parameters">nextjs.org/docs/app/api-reference/file-conventions/route</a><br>
+            <strong>Quote:</strong> "Route handlers receive params as a Promise"<br>
+            <strong>Repo cross-check:</strong> <code>package.json</code> pins <code>next@15.0.3</code> ✓</li>
+      </ul>
+      <h3>Repo</h3>
+      <ul>
+        <li><strong>Claim:</strong> <code>existingFn</code> is already async and returns <code>Result</code>.<br>
+            <strong>Source:</strong> <code>src/foo/bar.ts:L42</code><br>
+            <strong>Quote:</strong> <code>export async function existingFn(input: Input): Promise&lt;Result&gt;</code></li>
+      </ul>
+
+      <h2>8. Risks &amp; Open Questions</h2>
+      <ul>
+        <li>Risk: changing <code>existingFn</code> signature with default param keeps old callers compiling, but if any call site uses <code>existingFn.length</code> or argument introspection, that breaks. Mitigation: grep for <code>existingFn.length</code> before merging.</li>
+        <li>Open question: should <code>mode</code> be an enum or string literal union? Defaulting to union; flag for Mini Boss.</li>
+      </ul>
+
+      <h2>9. Approval</h2>
+      <!-- Mini Boss / user fills this in via send-message reply.
+           Pilot does NOT mark approved. -->
+      <ul>
+        <li>☐ <strong>Approved by Mini Boss</strong> — timestamp: ____, notes: ____</li>
+        <li>☐ Approved with revisions (see thread)</li>
+        <li>☐ Rejected — see thread for required changes</li>
+      </ul>
+
+      <h2>10. Code Reference Library</h2>
+      <!-- Paste the current source of any symbol referenced above. The viewer
+           indexes these and auto-links inline <code>code</code> mentions: clicking
+           an indexed symbol opens a side drawer with the source. If BEFORE and
+           AFTER are both provided, the AFTER tab renders as a unified diff.
+
+           Per-symbol convention:
+             <h3>REF: <exact-symbol-name></h3>
+             <p><strong>Location:</strong> <code>path:Lstart-Lend</code></p>
+             <pre><code class="language-…">// BEFORE  (or // CURRENT)
+             <full source></code></pre>
+             <pre><code class="language-…">// AFTER   (or // EXTENDED) — omit if no change
+             <full source></code></pre>
+
+           Tips: only include symbols you actually reference; use line ranges;
+           comment markers (//, #, --, ;) are language-agnostic. -->
+
+      <h3>REF: existingFn</h3>
+      <p><strong>Location:</strong> <code>src/foo/bar.ts:L42-L58</code></p>
+      <pre><code class="language-typescript">// BEFORE
+export function existingFn(input: Input): Result {
+  const validated = validate(input);
+  if (!validated.ok) {
+    throw new Error(validated.reason);
+  }
+  return process(validated.value);
+}
+</code></pre>
+      <pre><code class="language-typescript">// AFTER
+export function existingFn(input: Input, mode: Mode = 'legacy'): Result {
+  const validated = validate(input);
+  if (!validated.ok) {
+    throw new Error(validated.reason);
+  }
+  return process(validated.value, mode);
+}
+</code></pre>
+
+      <h3>REF: BaseModel</h3>
+      <p><strong>Location:</strong> <code>src/lib/models.ts:L8-L24</code></p>
+      <pre><code class="language-typescript">// BEFORE
+export abstract class BaseModel {
+  constructor(public id: string) {}
+  abstract validate(): boolean;
+  toJSON(): Record&lt;string, unknown&gt; {
+    return { id: this.id };
+  }
+}
+</code></pre>
+      <!-- No AFTER block — BaseModel is reused unchanged. Single block shows in
+           the drawer without tabs. -->
+    </article>
+  </main>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-diff.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: "base",
+    themeVariables: {
+      darkMode: true,
+      background: "#14181d",
+      primaryColor: "#1a2025",
+      primaryTextColor: "#e8e4d8",
+      primaryBorderColor: "#3a434c",
+      lineColor: "#8d959e",
+      secondaryColor: "#0a0d10",
+      tertiaryColor: "#1a2025",
+      fontFamily: '"JetBrains Mono", monospace',
+      fontSize: "13px"
+    },
+    flowchart: { curve: "basis", padding: 16 },
+    sequence: { actorFontFamily: '"JetBrains Mono", monospace' }
+  });
+
+  const docEl = document.getElementById("doc");
+
+  // wrapChangeBlocks: detect <h3>CHANGE NN — ...</h3> and frame each section
+  function wrapChangeBlocks(html) {
+    // Find every <h3> that begins with "CHANGE NN" and wrap until the next <h3>, <h2>, or end
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const children = Array.from(container.children);
+    const out = document.createElement("div");
+
+    let i = 0;
+    while (i < children.length) {
+      const node = children[i];
+      const isChangeH3 = node.tagName === "H3" && /^CHANGE\s+\d+/i.test(node.textContent.trim());
+      if (isChangeH3) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "change-block";
+        const m = node.textContent.match(/^CHANGE\s+(\d+)/i);
+        wrapper.setAttribute("data-tag", m ? `CHANGE ${m[1]}` : "CHANGE");
+        // strip the "CHANGE NN — " prefix from the visible heading
+        node.innerHTML = node.innerHTML.replace(/^CHANGE\s+\d+\s*[—-]\s*/i, "");
+        wrapper.appendChild(node);
+        i++;
+        while (i < children.length && !["H2", "H3"].includes(children[i].tagName)) {
+          wrapper.appendChild(children[i]);
+          i++;
+        }
+        out.appendChild(wrapper);
+      } else {
+        out.appendChild(node);
+        i++;
+      }
+    }
+    return out.innerHTML;
+  }
+
+  function applyStatus(status) {
+    const banner = document.getElementById("classification");
+    const rail = document.getElementById("rail-status");
+    const norm = status.toUpperCase();
+    banner.classList.remove("awaiting");
+    rail.classList.remove("awaiting", "approved", "rejected");
+    if (norm.includes("APPROVED")) {
+      banner.textContent = "PRE-FLIGHT BRIEFING · APPROVED · CLEARED FOR LAUNCH";
+      banner.style.background = "#3ddc97"; banner.style.color = "#000";
+      rail.classList.add("approved"); rail.textContent = "Approved";
+    } else if (norm.includes("REJECTED")) {
+      banner.textContent = "PRE-FLIGHT BRIEFING · REJECTED · STAND DOWN";
+      banner.style.background = "#ff4a3a"; banner.style.color = "#fff";
+      rail.classList.add("rejected"); rail.textContent = "Rejected";
+    } else {
+      banner.classList.add("awaiting");
+      rail.classList.add("awaiting"); rail.textContent = "Awaiting Approval";
+    }
+  }
+
+  function buildTOC() {
+    const toc = document.getElementById("toc");
+    toc.innerHTML = "";
+    document.querySelectorAll(".doc h2").forEach((h, idx) => {
+      const id = "sec-" + idx;
+      h.id = id;
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = "#" + id;
+      a.textContent = h.textContent.replace(/^\d+\.\s*/, "");
+      li.appendChild(a);
+      toc.appendChild(li);
+    });
+  }
+
+  function detectBAState(src) {
+    // First non-blank, non-fence line: look for `%% BEFORE` or `%% AFTER`
+    const firstContent = src.split(/\r?\n/).map(s => s.trim()).find(s => s.length > 0);
+    if (!firstContent) return null;
+    const m = firstContent.match(/^%%\s*(BEFORE|AFTER)\b/i);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  async function renderMermaidBlocks() {
+    const blocks = Array.from(docEl.querySelectorAll("pre code.language-mermaid"));
+    for (const [idx, code] of blocks.entries()) {
+      const src = code.textContent;
+      const wrap = document.createElement("div");
+      wrap.className = "mermaid";
+      const state = detectBAState(src);
+      if (state) wrap.dataset.baState = state;
+      try {
+        const { svg } = await mermaid.render(`m-${idx}-${Date.now()}`, src);
+        wrap.innerHTML = svg;
+      } catch (e) {
+        wrap.innerHTML = `<pre style="color:var(--red)">Mermaid render error:\n${e.message}</pre>`;
+      }
+      code.parentElement.replaceWith(wrap);
+    }
+    pairBeforeAfter();
+  }
+
+  function pairBeforeAfter() {
+    // Walk the doc; whenever a [data-ba-state="before"] is followed (skipping
+    // whitespace text nodes only) by [data-ba-state="after"], wrap the pair.
+    const mermaids = Array.from(docEl.querySelectorAll(".mermaid[data-ba-state]"));
+    const used = new WeakSet();
+    for (const node of mermaids) {
+      if (used.has(node) || node.dataset.baState !== "before") continue;
+      // Find the next sibling that's a .mermaid[data-ba-state="after"], skipping text/empty
+      let sib = node.nextElementSibling;
+      while (sib && !sib.classList?.contains("mermaid")) sib = sib.nextElementSibling;
+      if (!sib || sib.dataset.baState !== "after") continue;
+      // Build the toggle widget
+      const widget = document.createElement("div");
+      widget.className = "ba-widget";
+      widget.innerHTML = `
+        <div class="ba-controls">
+          <div class="ba-label">Blast Radius</div>
+          <div class="ba-tabs">
+            <button class="ba-tab" data-state="before" type="button"><span class="ba-marker"></span>Before</button>
+            <button class="ba-tab active" data-state="after" type="button"><span class="ba-marker"></span>After</button>
+          </div>
+        </div>
+        <div class="ba-panels"></div>
+      `;
+      const panels = widget.querySelector(".ba-panels");
+      const beforePanel = document.createElement("div");
+      beforePanel.className = "ba-panel";
+      beforePanel.dataset.state = "before";
+      const afterPanel = document.createElement("div");
+      afterPanel.className = "ba-panel active";
+      afterPanel.dataset.state = "after";
+      node.parentElement.insertBefore(widget, node);
+      beforePanel.appendChild(node);
+      afterPanel.appendChild(sib);
+      panels.appendChild(beforePanel);
+      panels.appendChild(afterPanel);
+      used.add(node); used.add(sib);
+      // Wire toggle
+      widget.querySelectorAll(".ba-tab").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.state;
+          widget.querySelectorAll(".ba-tab").forEach(b => b.classList.toggle("active", b.dataset.state === target));
+          widget.querySelectorAll(".ba-panel").forEach(p => p.classList.toggle("active", p.dataset.state === target));
+        });
+      });
+    }
+  }
+
+  let codeRefIndex = {};
+
+  // ── Code Reference Library ────────────────────────────────────────────
+  // Walks the rendered doc for h3 elements matching "REF: <name>", collects
+  // sibling location + code blocks, indexes by symbolName.toLowerCase().
+  // Then collapses the rendered library section so it doesn't clutter the
+  // main reading flow — the drawer renders the code on demand.
+  function buildCodeRefIndex() {
+    const refs = {};
+    const refHeadings = Array.from(docEl.querySelectorAll("h3"))
+      .filter(h => /^REF:\s+/i.test(h.textContent.trim()));
+    if (refHeadings.length === 0) return refs;
+
+    for (const h of refHeadings) {
+      const name = h.textContent.trim().replace(/^REF:\s+/i, "");
+      const blocks = [];
+      let location = null;
+      let sib = h.nextElementSibling;
+      const consumed = [h];
+      while (sib && !/^H[1-3]$/.test(sib.tagName)) {
+        consumed.push(sib);
+        if (sib.tagName === "P" && /^\*?\*?Location:?\*?\*?/i.test(sib.textContent.trim())) {
+          const locCode = sib.querySelector("code");
+          location = locCode ? locCode.textContent : sib.textContent.replace(/^\*?\*?Location:?\*?\*?\s*/i, "").trim();
+        }
+        if (sib.tagName === "PRE") {
+          const codeEl = sib.querySelector("code");
+          if (codeEl) {
+            const text = codeEl.textContent;
+            const firstLine = text.split(/\r?\n/).map(s => s.trim()).find(s => s.length > 0) || "";
+            const isExtended = /^(?:\/\/|#|--|;|\*|<!--)\s*(?:EXTENDED|AFTER)\b/i.test(firstLine);
+            const isCurrent = /^(?:\/\/|#|--|;|\*|<!--)\s*(?:CURRENT|BEFORE)\b/i.test(firstLine);
+            const variant = isExtended ? "extended" : (isCurrent ? "current" : (blocks.length === 0 ? "current" : "extended"));
+            blocks.push({ variant, html: sib.outerHTML });
+          }
+        }
+        sib = sib.nextElementSibling;
+      }
+      if (blocks.length > 0) {
+        refs[name.toLowerCase()] = { name, location, blocks };
+      }
+      // Move the consumed nodes into a hidden container so the library
+      // section doesn't render inline.
+      consumed.forEach(n => n.remove());
+    }
+
+    if (refHeadings.length > 0) {
+      // Find the parent "## Code Reference Library" h2 and replace its body
+      // with a collapsed pill summary.
+      const h2s = Array.from(docEl.querySelectorAll("h2"));
+      const libH2 = h2s.find(h => /code reference library/i.test(h.textContent));
+      if (libH2) {
+        // Remove sibling content under that h2 (already removed above via consumed)
+        // but also remove any intro paragraph between h2 and the (now-gone) first h3.
+        let sib = libH2.nextElementSibling;
+        while (sib && !/^H[1-2]$/.test(sib.tagName)) {
+          const next = sib.nextElementSibling;
+          sib.remove();
+          sib = next;
+        }
+        const summary = document.createElement("div");
+        summary.className = "ref-library-collapsed";
+        const count = Object.keys(refs).length;
+        summary.innerHTML = `<strong>${count}</strong> symbol${count === 1 ? "" : "s"} indexed — click any highlighted code reference in this document to view source.`;
+        libH2.insertAdjacentElement("afterend", summary);
+      }
+    }
+    return refs;
+  }
+
+  function wireCodeRefs() {
+    const codeNodes = docEl.querySelectorAll("code");
+    codeNodes.forEach(c => {
+      if (c.closest("pre")) return;
+      if (c.closest("h1, h2, h3, h4, h5, h6")) return;
+      // Strip trailing parens/punctuation for matching, but accept symbol-like text
+      const raw = c.textContent.trim();
+      // Match either bare symbol name or "name(" call expression
+      const key = raw.replace(/\(.*$/, "").trim().toLowerCase();
+      const ref = codeRefIndex[key] || codeRefIndex[raw.toLowerCase()];
+      if (!ref) return;
+      c.classList.add("code-ref");
+      c.title = `Click to view source for ${ref.name}`;
+      c.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openDrawer(ref);
+      });
+    });
+  }
+
+  // ── Line-based diff (LCS) — no external deps ──────────────────────────
+  function lineDiff(aText, bText) {
+    const a = aText.replace(/\n$/, "").split("\n");
+    const b = bText.replace(/\n$/, "").split("\n");
+    const n = a.length, m = b.length;
+    // LCS DP
+    const dp = Array(n + 1);
+    for (let i = 0; i <= n; i++) dp[i] = new Int32Array(m + 1);
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= m; j++) {
+        dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+    // Backtrack
+    const out = [];
+    let i = n, j = m;
+    while (i > 0 && j > 0) {
+      if (a[i - 1] === b[j - 1]) { out.push({ op: "ctx", text: a[i - 1] }); i--; j--; }
+      else if (dp[i - 1][j] >= dp[i][j - 1]) { out.push({ op: "del", text: a[i - 1] }); i--; }
+      else { out.push({ op: "ins", text: b[j - 1] }); j--; }
+    }
+    while (i > 0) { out.push({ op: "del", text: a[i - 1] }); i--; }
+    while (j > 0) { out.push({ op: "ins", text: b[j - 1] }); j--; }
+    return out.reverse();
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function renderDiffHtml(beforeText, afterText) {
+    const diff = lineDiff(beforeText, afterText);
+    const lines = diff.map(d => {
+      const sym = d.op === "ins" ? "+" : d.op === "del" ? "-" : " ";
+      return `<span class="line line-${d.op}"><span class="gutter">${sym}</span><span class="text">${escapeHtml(d.text)}</span></span>`;
+    }).join("\n");
+    return `<pre class="code-diff">${lines}</pre>`;
+  }
+
+  // Extract raw source from a stored block's pre HTML
+  function blockSource(block) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = block.html;
+    const code = tmp.querySelector("code");
+    return code ? code.textContent : "";
+  }
+
+  // ── Drawer ────────────────────────────────────────────────────────────
+  const drawerEl = document.getElementById("code-drawer");
+  const backdropEl = document.getElementById("code-drawer-backdrop");
+  document.getElementById("cd-close").addEventListener("click", closeDrawer);
+  backdropEl.addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && drawerEl.classList.contains("open")) closeDrawer();
+  });
+
+  function openDrawer(ref) {
+    document.getElementById("cd-name").textContent = ref.name;
+    const locEl = document.getElementById("cd-loc");
+    locEl.innerHTML = ref.location ? `Location: <code>${ref.location}</code>` : "Location: unknown";
+
+    const tabsEl = document.getElementById("cd-tabs");
+    const bodyEl = document.getElementById("cd-body");
+    tabsEl.innerHTML = "";
+    bodyEl.innerHTML = "";
+
+    // Find the BEFORE (current) and AFTER (extended) blocks. A symbol may
+    // have just one (current only). If both, AFTER tab renders as a diff.
+    const before = ref.blocks.find(b => b.variant === "current");
+    const after = ref.blocks.find(b => b.variant === "extended");
+
+    if (!after) {
+      // Only one variant — show it directly, no tabs needed
+      bodyEl.innerHTML = (before || ref.blocks[0]).html;
+      Prism.highlightAllUnder(bodyEl);
+    } else if (!before) {
+      // Only an extended block (rare) — show it as plain code
+      bodyEl.innerHTML = after.html;
+      Prism.highlightAllUnder(bodyEl);
+    } else {
+      // Both present — render tabs + diff for AFTER
+      const beforeSrc = blockSource(before);
+      const afterSrc = blockSource(after);
+      const diffHtml = renderDiffHtml(beforeSrc, afterSrc);
+
+      const renderTab = (which) => {
+        tabsEl.querySelectorAll(".code-drawer-tab").forEach(b =>
+          b.classList.toggle("active", b.dataset.which === which));
+        if (which === "before") {
+          bodyEl.innerHTML = before.html;
+          Prism.highlightAllUnder(bodyEl);
+        } else {
+          bodyEl.innerHTML = diffHtml;
+        }
+      };
+
+      const beforeTab = document.createElement("button");
+      beforeTab.type = "button";
+      beforeTab.className = "code-drawer-tab";
+      beforeTab.dataset.which = "before";
+      beforeTab.innerHTML = `<span class="ba-marker" style="display:inline-block;width:8px;height:8px;background:var(--red);margin-right:6px;vertical-align:middle;"></span>Before`;
+      beforeTab.addEventListener("click", () => renderTab("before"));
+      tabsEl.appendChild(beforeTab);
+
+      const afterTab = document.createElement("button");
+      afterTab.type = "button";
+      afterTab.className = "code-drawer-tab active";
+      afterTab.dataset.which = "after";
+      afterTab.innerHTML = `<span class="ba-marker" style="display:inline-block;width:8px;height:8px;background:var(--green);margin-right:6px;vertical-align:middle;"></span>After · Diff`;
+      afterTab.addEventListener("click", () => renderTab("after"));
+      tabsEl.appendChild(afterTab);
+
+      renderTab("after");
+    }
+
+    drawerEl.classList.add("open");
+    drawerEl.setAttribute("aria-hidden", "false");
+    backdropEl.classList.add("open");
+  }
+
+  function closeDrawer() {
+    drawerEl.classList.remove("open");
+    drawerEl.setAttribute("aria-hidden", "true");
+    backdropEl.classList.remove("open");
+  }
+
+  // Static init — operates on the HTML body the pilot wrote directly.
+  // No fetch, no markdown parsing. Open this file via file:// and it just works.
+  async function init() {
+    // 1. Title bar — use the values the pilot baked into the header div.
+    const ticket = document.getElementById("h-ticket").textContent.trim();
+    const title = document.getElementById("h-title").textContent.trim();
+    document.title = `${ticket} · ${title}`;
+
+    // 2. Frame CHANGE NN ... h3s as boxed change-blocks.
+    docEl.innerHTML = wrapChangeBlocks(docEl.innerHTML);
+
+    // 3. Build sidebar TOC, render mermaid, highlight code.
+    buildTOC();
+    await renderMermaidBlocks();
+    Prism.highlightAllUnder(docEl);
+
+    // 4. Index the Code Reference Library and wire inline code clicks.
+    codeRefIndex = buildCodeRefIndex();
+    wireCodeRefs();
+
+    // 5. Apply approval status from the banner's data-status attribute.
+    const status = document.getElementById("classification").dataset.status || "AWAITING APPROVAL";
+    applyStatus(status);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => { init(); });
+  } else {
+    init();
+  }
+</script>
+</body>
+</html>
