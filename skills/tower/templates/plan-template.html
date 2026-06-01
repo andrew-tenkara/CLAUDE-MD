@@ -935,6 +935,19 @@ flowchart LR
         <li>Open question: should <code>mode</code> be an enum or string literal union? Defaulting to union; flag for Mini Boss.</li>
       </ul>
 
+      <h3>Operational Constraints</h3>
+      <!--
+        Four bullets, one line each. Things that pass code review but bite
+        in prod. Write "N/A" for any that don't apply — don't delete the
+        bullet, the empty slot is a forcing function.
+      -->
+      <ul>
+        <li><strong>Security / auth path:</strong> new public endpoint, no auth changes. Existing <code>requireAuth</code> middleware applies via the route table.</li>
+        <li><strong>Performance budget:</strong> &lt;50ms added p95 (single extra <code>existingFn</code> call, no new I/O).</li>
+        <li><strong>Observability:</strong> N/A — reuses existing request-logging middleware; no new metrics or alerts needed.</li>
+        <li><strong>Compatibility:</strong> backward-compatible (default param). No client/SDK changes.</li>
+      </ul>
+
       <h2>9. Approval</h2>
       <!-- Mini Boss / user fills this in via send-message reply.
            Pilot does NOT mark approved. -->
