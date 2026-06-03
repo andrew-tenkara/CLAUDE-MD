@@ -568,7 +568,8 @@
   .code-diff .line-ins .gutter {
     color: var(--green); font-weight: bold; opacity: 1;
   }
-  .code-diff .line-ins .text { color: #8ee5a9; }
+  /* Let Prism token colors show through; the line tint + gutter signal ins/del. */
+  .code-diff .line-ins .text { color: var(--text); }
   .code-diff .line-del {
     background: rgba(255, 74, 58, 0.10);
     border-left: 2px solid var(--red);
@@ -577,9 +578,12 @@
   .code-diff .line-del .gutter {
     color: var(--red); font-weight: bold; opacity: 1;
   }
-  .code-diff .line-del .text { color: #ff9a91; }
-  .code-diff .line-ctx { padding-left: 2px; }
-  .code-diff .line-ctx .text { color: var(--text); opacity: 0.55; }
+  .code-diff .line-del .text { color: var(--text); }
+  .code-diff .line-ctx { padding-left: 2px; opacity: 0.75; }
+  .code-diff .line-ctx .text { color: var(--text); }
+  /* Prism token colors render inside .text spans of the diff */
+  .code-diff .token.comment { color: #6a7079; }
+  .code-diff .line-del .token, .code-diff .line-ins .token { filter: brightness(1.08); }
 
   .code-drawer-backdrop {
     position: fixed; inset: 0; z-index: 19;
@@ -1305,13 +1309,28 @@ export abstract class BaseModel {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  function renderDiffHtml(beforeText, afterText) {
+  // Syntax-highlight a single diff line via Prism so the AFTER·DIFF view reads
+  // like the BEFORE view (token colors), not monochrome +/- text.
+  function highlightLine(text, lang) {
+    if (!text) return "";
+    const grammar = (lang && Prism.languages[lang]) || Prism.languages.typescript;
+    try { return Prism.highlight(text, grammar, lang || "typescript"); }
+    catch { return escapeHtml(text); }
+  }
+
+  function renderDiffHtml(beforeText, afterText, lang) {
     const diff = lineDiff(beforeText, afterText);
     const lines = diff.map(d => {
       const sym = d.op === "ins" ? "+" : d.op === "del" ? "-" : " ";
-      return `<span class="line line-${d.op}"><span class="gutter">${sym}</span><span class="text">${escapeHtml(d.text)}</span></span>`;
+      return `<span class="line line-${d.op}"><span class="gutter">${sym}</span><span class="text">${highlightLine(d.text, lang)}</span></span>`;
     }).join("\n");
     return `<pre class="code-diff">${lines}</pre>`;
+  }
+
+  // Read the language-xxx class off a stored REF block (defaults to typescript).
+  function blockLang(block) {
+    const m = block && block.html && block.html.match(/language-([a-z0-9]+)/i);
+    return m ? m[1].toLowerCase() : "typescript";
   }
 
   // Extract raw source from a stored block's pre HTML
@@ -1358,7 +1377,7 @@ export abstract class BaseModel {
       // Both present — render tabs + diff for AFTER
       const beforeSrc = blockSource(before);
       const afterSrc = blockSource(after);
-      const diffHtml = renderDiffHtml(beforeSrc, afterSrc);
+      const diffHtml = renderDiffHtml(beforeSrc, afterSrc, blockLang(after) || blockLang(before));
 
       const renderTab = (which) => {
         tabsEl.querySelectorAll(".code-drawer-tab").forEach(b =>
