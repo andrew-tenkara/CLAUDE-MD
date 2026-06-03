@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Token savings dashboard — formatted CLI report.
-# Pulls from RTK gain + Pith telemetry/state + Headroom /stats endpoint.
+# Pulls from RTK gain + Headroom /stats endpoint.
 
 set -euo pipefail
 
@@ -77,100 +77,6 @@ for line in lines[:3]:
   fi
 else
   echo -e "  Status:       ${YELLOW}○ NOT INSTALLED${NC}"
-fi
-
-echo ""
-
-# ── Pith Stats ───────────────────────────────────────────────────────
-
-echo -e "${BOLD}Pith (Tool-Result Compression)${NC}"
-
-PITH_HOOK="${HOME}/.claude/hooks/pith/post-tool-use.js"
-PITH_TELEMETRY="${HOME}/.pith/telemetry.jsonl"
-PITH_STATE="${HOME}/.pith/state.json"
-
-if [[ -f "$PITH_HOOK" ]]; then
-  echo -e "  Status:       ${GREEN}● ACTIVE${NC} (PostToolUse hook)"
-
-  if [[ -s "$PITH_TELEMETRY" && "$HAS_PYTHON" == true ]]; then
-    python3 - "$PITH_TELEMETRY" "$PITH_STATE" << 'PYEOF'
-import json, sys, os
-from collections import defaultdict
-
-telemetry_path = sys.argv[1]
-state_path = sys.argv[2]
-
-def fmt(n):
-    if n is None: return "—"
-    if n >= 1_000_000_000: return f'{n/1_000_000_000:.2f}B'
-    if n >= 1_000_000: return f'{n/1_000_000:.1f}M'
-    if n >= 1_000: return f'{n/1_000:.1f}K'
-    return str(int(n))
-
-before_total = 0
-after_total = 0
-events = 0
-by_tool = defaultdict(lambda: {'before': 0, 'after': 0, 'count': 0})
-
-with open(telemetry_path) as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        try:
-            e = json.loads(line)
-        except Exception:
-            continue
-        b = e.get('before_tokens', 0) or 0
-        a = e.get('after_tokens', 0) or 0
-        tool = e.get('tool', '?')
-        before_total += b
-        after_total += a
-        events += 1
-        by_tool[tool]['before'] += b
-        by_tool[tool]['after']  += a
-        by_tool[tool]['count']  += 1
-
-saved = before_total - after_total
-avg_pct = (saved / before_total * 100) if before_total > 0 else 0
-
-print(f'  Total saved:  {fmt(saved)} tokens ({avg_pct:.1f}% avg)')
-print(f'  Events:       {events} tool calls compressed')
-
-# Top compressing tools by absolute savings
-top = sorted(
-    ((t, d['before'] - d['after'], d['count']) for t, d in by_tool.items() if d['before'] > d['after']),
-    key=lambda x: x[1], reverse=True
-)[:3]
-if top:
-    print(f'  Top savers:')
-    for tool, tsaved, count in top:
-        print(f'    {tool:<8} {fmt(tsaved):>8} saved  ({count} call{"s" if count != 1 else ""})')
-
-# Live session counter (mirrors what the statusline shows)
-if os.path.exists(state_path):
-    try:
-        with open(state_path) as f:
-            state = json.load(f)
-        sess_saved = 0
-        for proj in state.values():
-            sess_saved += proj.get('tokens_saved_session', 0) or 0
-        if sess_saved > 0:
-            print(f'  This session: {fmt(sess_saved)} tokens saved (live counter)')
-    except Exception:
-        pass
-
-# Save for COMBINED total below
-with open('/tmp/.pith-dashboard-saved', 'w') as f:
-    f.write(str(saved))
-PYEOF
-  elif [[ -s "$PITH_TELEMETRY" ]]; then
-    echo -e "  ${YELLOW}python3 required for telemetry parsing${NC}"
-  else
-    echo -e "  ${DIM}No telemetry yet — run a Claude Code session with file reads to populate.${NC}"
-  fi
-else
-  echo -e "  Status:       ${YELLOW}○ NOT INSTALLED${NC}"
-  echo -e "  ${DIM}Install with: bash <(curl -s https://raw.githubusercontent.com/abhisekjha/pith/main/install.sh)${NC}"
 fi
 
 echo ""
@@ -285,13 +191,6 @@ try:
 except (FileNotFoundError, subprocess.CalledProcessError):
     pass
 
-# Pith — dropped by the Pith section above
-try:
-    with open('/tmp/.pith-dashboard-saved') as f:
-        total += int(f.read().strip())
-except (OSError, ValueError):
-    pass
-
 # Headroom — independent fetch from /stats
 try:
     with urllib.request.urlopen('http://localhost:8787/stats', timeout=1) as r:
@@ -304,12 +203,9 @@ print(f'{total:,}')
 PYEOF
 )
   if [[ -n "$CROSS_TOOL_TOTAL" && "$CROSS_TOOL_TOTAL" != "0" ]]; then
-    echo -e "${BOLD}STACK TOTAL:${NC} ${GREEN}${CROSS_TOOL_TOTAL} tokens saved${NC} ${DIM}(RTK + Pith + Headroom, lifetime)${NC}"
+    echo -e "${BOLD}STACK TOTAL:${NC} ${GREEN}${CROSS_TOOL_TOTAL} tokens saved${NC} ${DIM}(RTK + Headroom, lifetime)${NC}"
     echo ""
   fi
 fi
-
-# Clean up the tmpfile Pith section dropped
-rm -f /tmp/.pith-dashboard-saved 2>/dev/null
 
 echo -e "${BOLD}═══════════════════════════════════${NC}"

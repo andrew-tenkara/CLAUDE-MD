@@ -1,17 +1,16 @@
 ---
 name: token-savings
-description: Setup wizard and dashboard for RTK (Bash output filtering), Pith (Read/Grep tool-result compression), and Headroom (API-side session compression). Run on first use to install and wire all three. Run again to see a live savings dashboard.
+description: Setup wizard and dashboard for RTK (Bash output filtering) and Headroom (API-side session compression). Run on first use to install and wire both. Run again to see a live savings dashboard.
 ---
 
 # /token-savings
 
-Three-tool token savings stack. Each operates at a different lifecycle event, so they compose cleanly:
+Two-tool token savings stack. Each operates at a different lifecycle event, so they compose cleanly:
 
 - **RTK** — `PreToolUse` hook on `Bash`. Filters verbose CLI output before it enters context (60-90% on shell-heavy turns).
-- **Pith** — `PostToolUse` hook on all tools. Compresses Read/Grep/Glob results into skeletons + summaries before they hit context (~88% on file reads, ~91% on bash/build, caps grep at 25 matches). Also runs a token meter in the statusline and auto-compacts at 70%.
 - **Headroom** — `ANTHROPIC_BASE_URL` proxy. Prefix-cache + ML compression on the wire to api.anthropic.com.
 
-Stacked, expect roughly 60-70% reduction. The compounding win is that Pith shrinks the transcript Headroom has to compress, and produces byte-stable skeletons that warm Headroom's prefix cache turn over turn.
+Stacked, expect roughly 50-70% reduction depending on workload. RTK kills shell noise at the source; Headroom compresses the rest on the wire and warms a prefix cache turn-over-turn.
 
 ## Flow
 
@@ -33,13 +32,7 @@ Stacked, expect roughly 60-70% reduction. The compounding win is that Pith shrin
 - All platforms: `pip install "headroom-ai[proxy]"`
 - After install, verify: `headroom --version`
 
-**Pith not installed:**
-- All platforms: `bash <(curl -s https://raw.githubusercontent.com/abhisekjha/pith/main/install.sh)`
-- Self-clones to `~/.local/share/pith`, copies hooks to `~/.claude/hooks/pith/`, patches `settings.json`, registers `/pith`, `/budget`, `/focus`, `/pith-graph` slash commands, and sets a `statusLine` token meter.
-- ⚠️ **Back up `~/.claude/settings.json` first** — the installer overwrites `statusLine` unconditionally. If the user has a custom statusline, capture it before running and merge back after.
-- After install, verify: `ls ~/.claude/hooks/pith/` shows `session-start.js`, `post-tool-use.js`, `prompt-submit.js`, `stop.js`.
-
-Ask the user before running install commands. Show the command and wait for confirmation. The Pith installer is curl-bash — show the URL and offer to inspect with `curl -sL <url> | less` first if they want.
+Ask the user before running install commands. Show the command and wait for confirmation.
 
 ### 5. Wire hooks
 
@@ -62,15 +55,7 @@ Check `~/.claude/settings.json` for missing hooks. If a hook is missing, offer t
   ```
 - The preflight checks both that the hook exists AND that it writes `ANTHROPIC_BASE_URL`.
 
-**Pith hooks** (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`):
-- The Pith installer wires all four automatically. No manual `settings.json` editing needed.
-- After install, verify with: `jq '.hooks | to_entries | map({k:.key, c:[.value[].hooks[]?.command]})' ~/.claude/settings.json` — you should see `pith/*.js` entries on all four events alongside the existing RTK (PreToolUse) and Headroom (SessionStart) entries.
-- `SessionStart` will have two entries after install (Headroom autostart + Pith init). Both fire — additive, no conflict.
-- The PostToolUse hook uses `matcher: ""` (all tools). Bash output replacement via PostToolUse has [an open bug on CC ≥v2.1.121](https://github.com/anthropics/claude-code/issues/54196) — Pith's Bash compression may silently no-op on macOS. That's fine: RTK already handles Bash. Read/Grep/Glob compression works as expected.
-
 After wiring, re-run preflight to confirm: `bash "$SKILL_DIR/scripts/preflight.sh"`
-
-**Note:** `preflight.sh` currently only checks RTK and Headroom. It will not flag a missing Pith install. If you want preflight to enforce all three, extend the script to check for `~/.claude/hooks/pith/post-tool-use.js`.
 
 ### 6. Dashboard
 
