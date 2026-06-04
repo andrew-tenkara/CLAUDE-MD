@@ -146,6 +146,17 @@ fi
 
 echo "WORKTREE:${WORKTREE_PATH}"
 
+# ── CGC: index worktree ───────────────────────────────────────────────
+# Index the new worktree so the pilot's code graph reflects their branch.
+# Runs in the background — Phase 1 planning gives it time to complete.
+CGC_BIN="${CGC_PATH:-/Users/andrew/.local/bin/cgc}"
+if [ -x "$CGC_BIN" ]; then
+  echo "CGC: indexing worktree in background..."
+  mkdir -p "${WORKTREE_PATH}/.sortie"
+  "$CGC_BIN" index "${WORKTREE_PATH}" > "${WORKTREE_PATH}/.sortie/cgc-index.log" 2>&1 &
+  echo $! > "${WORKTREE_PATH}/.sortie/cgc-index.pid"
+fi
+
 # Resolve actual branch — may differ from BRANCH_NAME if worktree already existed
 BRANCH_NAME=$(git -C "$WORKTREE_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "$BRANCH_NAME")
 
@@ -306,6 +317,16 @@ If you need to answer a question about code structure, architecture, or project 
 5. **If not locally discoverable** — use the Exa MCP to search the web
 
 Never answer from assumption. If you haven't read it, say so and go find it.
+
+## Code Graph — Register Your Workspace
+
+At the start of your session, register your worktree with the code graph so your edits are tracked live:
+
+\`\`\`
+CodeGraphContext MCP → watch_directory(path: "${WORKTREE_PATH}")
+\`\`\`
+
+This does two things: kicks off an initial scan (background, returns job_id) and registers live file watching so CGC reflects your changes as you work. Run check_job_status(job_id) if you want to confirm indexing is done before running blast-radius queries.
 
 ## Before You Write Code
 Your training data is stale. Before implementing anything non-trivial, verify current best practices via Exa MCP.
