@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400;700;900&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
 <style>
   :root {
     --bg: #0a0d10;
@@ -59,128 +59,93 @@
     );
   }
 
-  /* Classification banner */
-  .classification {
-    position: sticky; top: 0; z-index: 10;
-    background: var(--amber); color: #000;
-    font-family: var(--display); font-weight: 900;
-    letter-spacing: 0.2em; font-size: 13px;
-    padding: 6px 24px; text-align: center;
-    border-bottom: 2px solid #000;
-    text-transform: uppercase;
-  }
-  .classification.awaiting { animation: pulse 2.4s ease-in-out infinite; }
-  @keyframes pulse {
-    0%, 100% { background: var(--amber); }
-    50%      { background: #ffd56e; }
-  }
-
-  /* Layout */
+  /* Layout — clean sidebar + article (no top banner) */
   .shell {
-    max-width: 1240px; margin: 0 auto; padding: 32px 24px 120px;
-    display: grid; grid-template-columns: 220px 1fr; gap: 40px;
+    max-width: 1240px; margin: 0 auto; padding: 0;
+    display: grid; grid-template-columns: 240px 1fr; gap: 0;
     position: relative; z-index: 1;
   }
+  .shell > main { padding: 0 48px 120px; max-width: 1000px; }
   @media (max-width: 900px) {
     .shell { grid-template-columns: 1fr; }
-    .rail { position: static !important; }
+    .rail { position: static !important; height: auto !important; border-right: none !important; }
+    .shell > main { padding: 0 20px 80px; }
   }
 
   /* Sidebar rail */
   .rail {
-    position: sticky; top: 56px; align-self: start;
-    font-size: 12px;
-    border-right: 1px dashed var(--border);
-    padding-right: 16px;
+    position: sticky; top: 0; align-self: start;
+    height: 100vh; overflow-y: auto;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 18px; font-size: 12px;
   }
   .rail h4 {
-    font-family: var(--display); letter-spacing: 0.18em;
-    font-size: 11px; color: var(--amber); margin: 0 0 10px;
-    text-transform: uppercase;
+    letter-spacing: 0.08em; font-size: 11px; color: var(--amber);
+    margin: 0 0 10px; text-transform: uppercase; font-weight: 700;
   }
-  .rail .meta { display: grid; grid-template-columns: 70px 1fr; gap: 4px 12px; margin-bottom: 24px; }
+  .rail .meta { display: grid; grid-template-columns: 60px 1fr; gap: 4px 12px; margin-bottom: 22px; }
   .rail .meta dt { color: var(--dim); text-transform: uppercase; font-size: 10px; letter-spacing: 0.1em; }
   .rail .meta dd { margin: 0; color: var(--text); word-break: break-all; }
   .rail .status {
-    margin-bottom: 24px; padding: 8px 10px;
+    margin-bottom: 22px; padding: 7px 10px;
     background: var(--raised); border-left: 3px solid var(--amber);
-    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
   }
   .rail .status.approved { border-left-color: var(--green); color: var(--green); }
   .rail .status.rejected { border-left-color: var(--red); color: var(--red); }
-  .rail ol {
-    list-style: none; padding: 0; margin: 0;
-    counter-reset: toc;
+  .rail ol { list-style: none; padding: 0; margin: 0; }
+  .rail ol li { padding: 0; border: none; }
+  .rail ol li a {
+    display: block; color: var(--dim); text-decoration: none;
+    font-size: 13px; padding: 5px 0 5px 10px; border-left: 2px solid transparent;
   }
-  .rail ol li {
-    counter-increment: toc;
-    padding: 4px 0;
-    border-top: 1px solid var(--border);
-  }
-  .rail ol li::before {
-    content: counter(toc, decimal-leading-zero);
-    color: var(--amber-dim); margin-right: 8px; font-weight: 700;
-  }
-  .rail ol li a { color: var(--text); text-decoration: none; }
-  .rail ol li a:hover { color: var(--amber); }
+  .rail ol li a:hover { color: var(--text); border-left-color: var(--amber); }
 
-  /* Header block */
+  /* Quiet document header (no amber banner / accent bar / stencil) */
   .header {
-    border: 1px solid var(--border-strong);
-    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
-    padding: 24px 28px; margin-bottom: 32px;
-    position: relative; overflow: hidden;
+    border: none; background: none;
+    border-bottom: 1px solid var(--border);
+    padding: 40px 0 20px; margin: 0 0 32px;
   }
-  .header::before {
-    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 6px;
-    background: var(--amber);
+  .badge {
+    display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 4px;
+    background: rgba(240,180,41,.12); color: var(--amber); border: 1px solid rgba(240,180,41,.3);
   }
+  .badge.approved { background: rgba(61,220,151,.12); color: var(--green); border-color: rgba(61,220,151,.35); }
+  .badge.rejected { background: rgba(255,74,58,.12); color: var(--red); border-color: rgba(255,74,58,.35); }
   .header .ticket-row {
-    font-family: var(--display); font-size: 13px; letter-spacing: 0.24em;
-    color: var(--amber); text-transform: uppercase; margin-bottom: 4px;
+    font-size: 12px; letter-spacing: 0.18em; color: var(--amber);
+    text-transform: uppercase; margin: 14px 0 4px;
   }
   .header h1 {
-    font-family: var(--display); font-weight: 900;
-    font-size: clamp(28px, 4vw, 44px); line-height: 1.05;
-    margin: 0 0 12px; letter-spacing: 0.02em;
+    font-weight: 700; font-size: 30px; line-height: 1.15;
+    margin: 0 0 10px; letter-spacing: 0;
   }
-  .header .sub {
-    font-size: 12px; color: var(--dim); letter-spacing: 0.05em;
-  }
+  .header .sub { font-size: 12px; color: var(--dim); letter-spacing: 0.04em; }
 
   /* Markdown rendered content */
   .doc { font-size: 14px; }
   .doc h2 {
-    font-family: var(--display); font-weight: 700;
-    font-size: 26px; letter-spacing: 0.04em;
-    color: var(--text); margin: 48px 0 16px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--border);
-    text-transform: uppercase;
-    display: flex; align-items: baseline; gap: 12px;
+    font-weight: 600; font-size: 22px; letter-spacing: 0;
+    color: var(--text); margin: 44px 0 14px;
+    padding-top: 18px; border-top: 1px solid var(--border);
   }
-  .doc h2::before {
-    content: ""; width: 12px; height: 12px;
-    background: var(--amber); display: inline-block;
-    transform: rotate(45deg);
-  }
+  .doc h2:first-of-type { border-top: none; padding-top: 0; margin-top: 8px; }
   .doc h3 {
-    font-family: var(--display); font-weight: 700;
-    font-size: 17px; letter-spacing: 0.12em;
-    margin: 28px 0 12px; color: var(--amber);
-    text-transform: uppercase;
+    font-weight: 600; font-size: 16px; letter-spacing: 0;
+    margin: 26px 0 10px; color: #6ea8fe;
   }
   .doc h4 {
-    font-family: var(--mono); font-weight: 700;
-    font-size: 13px; letter-spacing: 0.05em;
-    margin: 20px 0 8px; color: var(--text);
-    text-transform: uppercase;
+    font-family: var(--mono); font-weight: 700; font-size: 13px;
+    letter-spacing: 0.03em; margin: 20px 0 8px; color: var(--text);
   }
-  .doc p { margin: 8px 0 14px; }
+  .doc p { margin: 8px 0 14px; color: #cdd3dd; }
   .doc a { color: var(--amber); text-decoration: underline dotted; text-underline-offset: 3px; }
-  .doc a:hover { color: var(--text); background: var(--amber); padding: 0 2px; }
+  .doc a:hover { color: var(--text); }
   .doc ul, .doc ol { padding-left: 22px; margin: 8px 0 16px; }
-  .doc li { margin: 4px 0; }
+  .doc li { margin: 4px 0; color: #cdd3dd; }
   .doc strong { color: var(--amber); font-weight: 700; }
   .doc em { color: var(--text); font-style: italic; }
   .doc blockquote {
@@ -215,27 +180,19 @@
     border-radius: 2px;
   }
 
-  /* Code blocks */
-  .doc pre {
-    margin: 12px 0; padding: 16px;
-    background: #0d1216 !important;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--amber-dim);
-    overflow-x: auto; font-size: 12.5px;
-    line-height: 1.5;
-  }
-  .doc pre code { font-family: var(--mono) !important; }
+  /* Fenced code block — GitHub Primer dark (highlight.js github-dark theme via head <link>) */
+  .doc pre { margin: 12px 0; background: #0d1117 !important; border: 1px solid #30363d; border-left: 3px solid var(--amber-dim); border-radius: 6px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.45; text-shadow: none !important; }
+  .doc pre code, .code-drawer-body pre code { background: none !important; padding: 0; text-shadow: none !important; color: #e6edf3; font-family: var(--mono) !important; font-size: 12.5px; line-height: 1.45; tab-size: 2; }
+  .doc pre code.hljs, .code-drawer-body pre code.hljs { padding: 0; background: none !important; }
 
-  /* Diff blocks — make them LOUD */
-  .doc pre.language-diff,
-  .doc pre[class*="language-diff"] {
-    border-left: 4px solid var(--amber);
-    background: #0d1216 !important;
-  }
-  .token.deleted { background: rgba(255,74,58,0.12) !important; color: #ff8a7e !important; }
-  .token.inserted { background: rgba(61,220,151,0.12) !important; color: #6ee5ae !important; }
-  .token.deleted::before { content: ""; }
-  .token.inserted::before { content: ""; }
+  /* Tokenized diff: highlight.js TS colors + GitHub-PR-style +/- line backgrounds */
+  code.ts-diff { display: block; }
+  .diff-line { display: block; margin: 0 -16px; padding: 0 16px; white-space: pre; }
+  .diff-gutter { display: inline-block; width: 1.5em; text-align: center; color: #6e7681; user-select: none; }
+  .diff-add { background: rgba(46,160,67,.15); }
+  .diff-add .diff-gutter { color: #3fb950; }
+  .diff-del { background: rgba(248,81,73,.18); }
+  .diff-del .diff-gutter { color: #f85149; }
 
   /* CHANGE block prominence — h3 starting with CHANGE gets framing */
   .change-block {
@@ -619,6 +576,53 @@
     color: var(--text); font-size: 12px;
   }
 
+  /* UI Mockups — before/after static-HTML preview embedded as srcdoc iframes.
+     The skill inlines each mockup's full HTML into srcdoc so the doc stays a
+     single self-contained file (no relative-path breakage when it moves). */
+  .mockups { margin: 24px 0 8px; }
+  .mockups-note { color: var(--dim); font-size: 12px; margin: 0 0 12px; }
+  .mockups-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .mockups-grid.single { grid-template-columns: 1fr; }
+  @media (max-width: 900px) {
+    .mockups-grid { grid-template-columns: 1fr; }
+  }
+  .mockup-pane {
+    border: 1px solid var(--border);
+    background: var(--raised);
+    border-radius: 3px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .mockup-pane > .mockup-label {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    color: var(--dim);
+  }
+  .mockup-pane > .mockup-label::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim);
+  }
+  .mockup-pane[data-state="before"] > .mockup-label::before { background: var(--red); }
+  .mockup-pane[data-state="after"]  > .mockup-label::before { background: var(--green); }
+  .mockup-pane iframe {
+    width: 100%; height: 420px; border: 0; background: #fff;
+  }
+  /* Long mockups collapse behind a disclosure to keep the plan scannable. */
+  .mockups details > summary {
+    cursor: pointer; list-style: none;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 8px 12px; color: var(--amber);
+    border: 1px solid var(--border); border-radius: 3px;
+  }
+  .mockups details[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+
   /* Section reveal */
   .doc > h2, .doc > p, .doc > ul, .doc > ol, .doc > table,
   .doc > pre, .doc > .change-block, .doc > .mermaid {
@@ -632,7 +636,7 @@
 </head>
 <body>
 
-<div class="classification awaiting" id="classification" data-status="AWAITING APPROVAL">PRE-FLIGHT BRIEFING · RESTRICTED · AWAITING APPROVAL</div>
+<!-- classification banner removed — status now shows as a badge in the document header -->
 
 <!-- Code drawer (slides in from the right when a code-ref is clicked) -->
 <div class="code-drawer-backdrop" id="code-drawer-backdrop"></div>
@@ -651,11 +655,10 @@
 <div class="shell">
 
   <aside class="rail">
-    <h4>Sortie</h4>
+    <h4>Task</h4>
     <dl class="meta" id="meta">
       <dt>Ticket</dt><dd id="m-ticket">{{TICKET_ID}}</dd>
-      <dt>Callsign</dt><dd id="m-callsign">{{CALLSIGN}}</dd>
-      <dt>Model</dt><dd id="m-model">{{MODEL}}</dd>
+      <dt>Author</dt><dd id="m-author">{{AUTHOR}}</dd>
       <dt>Launch</dt><dd id="m-launched">{{LAUNCHED_AT}}</dd>
     </dl>
 
@@ -667,9 +670,10 @@
 
   <main>
     <div class="header">
+      <span class="badge" id="doc-badge" data-status="AWAITING APPROVAL">Spec · Awaiting Approval</span>
       <div class="ticket-row" id="h-ticket">{{TICKET_ID}}</div>
       <h1 id="h-title">{{MISSION_TITLE}}</h1>
-      <div class="sub" id="h-sub">{{CALLSIGN}} · {{MODEL}} · {{LAUNCHED_AT}}</div>
+      <div class="sub" id="h-sub">{{AUTHOR}} · {{MODEL}} · {{LAUNCHED_AT}}</div>
     </div>
 
     <article class="doc" id="doc">
@@ -684,6 +688,11 @@
       <h2>1. Mission Directive</h2>
       <!-- One paragraph. User-visible outcome. Not "refactor X" — "users can now Y because Z". -->
       <p>{{MISSION_DIRECTIVE}}</p>
+
+      <!-- html-planning-doc injects the before/after UI mockup section here, or
+           replaces this placeholder with an empty string when no mockups are
+           provided (graceful fallback — no empty iframes). -->
+      {{MOCKUPS}}
 
       <h2>2. Reuse Audit</h2>
       <!-- REQUIRED. Existing symbols/files you can extend. For every new thing,
@@ -740,7 +749,7 @@
 </code></pre>
       <p><strong>Legend:</strong> amber = new, charcoal = existing.</p>
 
-      <h2>4. Ordnance Loadout — Code Changes</h2>
+      <h2>4. Code Changes</h2>
       <!-- Every code change goes here as a CHANGE NN block. The diff is the spec.
            Every CHANGE block REQUIRES a Blast Radius subsection — see CHANGE 02
            for the canonical example with paired %% BEFORE / %% AFTER mermaid. -->
@@ -749,7 +758,7 @@
       <p><strong>Kind:</strong> new file<br>
          <strong>Reuses:</strong> <code>existingFn</code> (<code>src/foo/bar.ts:L42</code>), <code>BaseModel</code> (<code>src/lib/models.ts:L8</code>)<br>
          <strong>Why:</strong> Entry point for the new auth path. Delegates all real work to reused symbols.</p>
-      <pre><code class="language-diff">+ import { existingFn } from '../foo/bar';
+      <pre><code class="ts-diff nohighlight">+ import { existingFn } from '../foo/bar';
 + import { BaseModel } from '../lib/models';
 +
 + export async function newHandler(req: Request): Promise&lt;Response&gt; {
@@ -764,7 +773,7 @@
       <p><strong>Kind:</strong> modify (signature change with default param, backward-compatible)<br>
          <strong>Reuses:</strong> existing function body<br>
          <strong>Why:</strong> Add optional <code>mode</code> parameter to support the new path without breaking old callers.</p>
-      <pre><code class="language-diff">- export function existingFn(input: Input): Result {
+      <pre><code class="ts-diff nohighlight">- export function existingFn(input: Input): Result {
 -   return process(input);
 + export function existingFn(input: Input, mode: Mode = 'legacy'): Result {
 +   return process(input, mode);
@@ -810,8 +819,8 @@ flowchart LR
     f1 -. covers .-&gt; station
     f1 -. covers .-&gt; c1
 
-    classDef station fill:#fce75d,stroke:#0a0d10,color:#0a0d10,stroke-width:3px,font-weight:bold
-    classDef direct fill:#ff6ec7,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
+    classDef station fill:#3a3410,stroke:#fce75d,color:#fbe7a1,stroke-width:3px,font-weight:bold
+    classDef direct fill:#3a1430,stroke:#ff6ec7,color:#ffd6ef,stroke-width:2px,font-weight:bold
     classDef transitive fill:#5a2748,stroke:#ff6ec7,color:#ff6ec7,stroke-dasharray: 4 2
     classDef test fill:#0d2a1f,stroke:#7ac4e8,color:#7ac4e8,stroke-dasharray: 5 5
 </code></pre>
@@ -849,9 +858,9 @@ flowchart LR
     f1 -. covers .-&gt; c1
     f2 -. covers .-&gt; c3
 
-    classDef station fill:#fce75d,stroke:#0a0d10,color:#0a0d10,stroke-width:3px,font-weight:bold
-    classDef direct fill:#ff6ec7,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
-    classDef new fill:#5cb85c,stroke:#0a0d10,color:#0a0d10,stroke-width:2px,font-weight:bold
+    classDef station fill:#3a3410,stroke:#fce75d,color:#fbe7a1,stroke-width:3px,font-weight:bold
+    classDef direct fill:#3a1430,stroke:#ff6ec7,color:#ffd6ef,stroke-width:2px,font-weight:bold
+    classDef new fill:#11371f,stroke:#5cb85c,color:#aff5b4,stroke-width:2px,font-weight:bold
     classDef transitive fill:#5a2748,stroke:#ff6ec7,color:#ff6ec7,stroke-dasharray: 4 2
     classDef test fill:#0d2a1f,stroke:#7ac4e8,color:#7ac4e8,stroke-dasharray: 5 5
     classDef newtest fill:#0d2a1f,stroke:#5cb85c,color:#5cb85c,stroke-width:2px
@@ -876,7 +885,7 @@ flowchart LR
       <p><strong>Kind:</strong> modify<br>
          <strong>Reuses:</strong> existing route table<br>
          <strong>Why:</strong> Wire the new handler into the router.</p>
-      <pre><code class="language-diff">  const routes = {
+      <pre><code class="ts-diff nohighlight">  const routes = {
     '/legacy': legacyHandler,
 +   '/new': newHandler,
   };
@@ -886,8 +895,14 @@ flowchart LR
            Every modified existing symbol MUST have the full mermaid+table treatment.
            If you can't describe a change as a diff, you don't understand it yet. -->
 
-      <h2>5. Sequence / Control Flow</h2>
-      <!-- Optional mermaid sequence diagram for async/multi-step work. -->
+      <h2>5. Sequence / State / Data Model</h2>
+      <!-- Pick the diagram(s) that fit the change; delete the rest. Each is an
+           optional mermaid block (renders automatically):
+             • Sequence      — async / multi-step request flows (below)
+             • State         — any status/lifecycle enum (stateDiagram-v2)
+             • ER            — a schema change / migration (erDiagram)
+             • C4 Container  — only when service/system boundaries move -->
+      <!-- Sequence — async/multi-step work. -->
       <pre><code class="language-mermaid">sequenceDiagram
     participant U as User
     participant H as newHandler
@@ -900,6 +915,55 @@ flowchart LR
     D--&gt;&gt;E: rows
     E--&gt;&gt;H: result
     H--&gt;&gt;U: 200 OK
+</code></pre>
+
+      <!-- State — REQUIRED when the change adds or moves a status/lifecycle enum.
+           e.g. insurance_status: quoted | unavailable | excluded | failed. -->
+      <pre><code class="language-mermaid">stateDiagram-v2
+    [*] --&gt; resolving
+    resolving --&gt; quoted: insurable &amp; within ceiling
+    resolving --&gt; unavailable: hazmat / parcel / over-limit
+    resolving --&gt; excluded: commodity excluded
+    quoted --&gt; failed: Loadsure error
+    quoted --&gt; bound: purchase
+    unavailable --&gt; [*]
+    excluded --&gt; [*]
+    failed --&gt; [*]
+    bound --&gt; [*]
+</code></pre>
+
+      <!-- ER — REQUIRED when a migration / schema change is in scope. Show the
+           delta; mark new columns/tables in the field comment. -->
+      <pre><code class="language-mermaid">erDiagram
+    MATERIAL {
+        uuid id PK
+        string material_name
+        int loadsure_commodity_id "NEW (migration) — nullable FK to commodity ref"
+    }
+    QUOTE {
+        uuid id PK
+        uuid cart_item_id FK
+        string insurance_status "NEW — quoted|unavailable|excluded|failed"
+        int premium_cents
+    }
+    MATERIAL ||--o{ QUOTE : "quoted for"
+</code></pre>
+
+      <!-- C4 Container — OPTIONAL, only when service/system boundaries move.
+           Delete if this change stays inside one service. -->
+      <pre><code class="language-mermaid">flowchart TB
+    subgraph web["Web App (Next.js)"]
+        UI["Cargo-insurance UI"]:::existing
+    end
+    subgraph api["API service"]
+        SVC["insurance-service"]:::changed
+    end
+    LS["Loadsure API"]:::external
+    UI --&gt; SVC
+    SVC --&gt;|quote / bind| LS
+    classDef existing fill:#1a1f24,stroke:#e8e4d8,color:#e8e4d8
+    classDef changed fill:#ffb627,stroke:#0a0d10,color:#0a0d10,font-weight:bold
+    classDef external fill:#10243a,stroke:#6ea8fe,color:#7cb0f5
 </code></pre>
 
       <h2>6. Execution Checklist</h2>
@@ -1017,10 +1081,8 @@ export abstract class BaseModel {
 
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-diff.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-typescript.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 
 <script>
@@ -1080,22 +1142,20 @@ export abstract class BaseModel {
   }
 
   function applyStatus(status) {
-    const banner = document.getElementById("classification");
+    const badge = document.getElementById("doc-badge");
     const rail = document.getElementById("rail-status");
-    const norm = status.toUpperCase();
-    banner.classList.remove("awaiting");
-    rail.classList.remove("awaiting", "approved", "rejected");
+    const norm = (status || "").toUpperCase();
+    if (rail) rail.classList.remove("awaiting", "approved", "rejected");
+    if (badge) badge.classList.remove("approved", "rejected");
     if (norm.includes("APPROVED")) {
-      banner.textContent = "PRE-FLIGHT BRIEFING · APPROVED · CLEARED FOR LAUNCH";
-      banner.style.background = "#3ddc97"; banner.style.color = "#000";
-      rail.classList.add("approved"); rail.textContent = "Approved";
+      if (badge) { badge.textContent = "Approved"; badge.classList.add("approved"); }
+      if (rail) { rail.classList.add("approved"); rail.textContent = "Approved"; }
     } else if (norm.includes("REJECTED")) {
-      banner.textContent = "PRE-FLIGHT BRIEFING · REJECTED · STAND DOWN";
-      banner.style.background = "#ff4a3a"; banner.style.color = "#fff";
-      rail.classList.add("rejected"); rail.textContent = "Rejected";
+      if (badge) { badge.textContent = "Rejected"; badge.classList.add("rejected"); }
+      if (rail) { rail.classList.add("rejected"); rail.textContent = "Rejected"; }
     } else {
-      banner.classList.add("awaiting");
-      rail.classList.add("awaiting"); rail.textContent = "Awaiting Approval";
+      if (badge) badge.textContent = "Spec · Awaiting Approval";
+      if (rail) { rail.classList.add("awaiting"); rail.textContent = "Awaiting Approval"; }
     }
   }
 
@@ -1122,6 +1182,35 @@ export abstract class BaseModel {
     return m ? m[1].toLowerCase() : null;
   }
 
+  // WCAG relative luminance (sRGB → linear), threshold 0.179 → black or white.
+  // https://www.w3.org/WAI/GL/wiki/Relative_luminance
+  function readableTextColor(rgb) {
+    const lin = (c) => { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const L = 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    return L > 0.179 ? "#0a0d10" : "#f5f1ed";
+  }
+  function parseRgb(s) {
+    const m = (s || "").match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const p = m[1].split(",").map((x) => parseFloat(x));
+    return (p.length >= 3 && p.every((n) => !isNaN(n))) ? [p[0], p[1], p[2]] : null;
+  }
+  // For each rendered node, pick label text color by the node's actual fill
+  // luminance — guarantees readable text on any fill, no hand-tuned colors.
+  function fixNodeContrast(root) {
+    root.querySelectorAll("g.node").forEach((node) => {
+      const shape = node.querySelector("rect, polygon, circle, ellipse, path");
+      if (!shape) return;
+      const rgb = parseRgb(getComputedStyle(shape).fill);
+      if (!rgb) return;
+      const col = readableTextColor(rgb);
+      node.querySelectorAll(".nodeLabel, .nodeLabel *, foreignObject div, text, tspan").forEach((t) => {
+        t.style.color = col;
+        t.style.fill = col;
+      });
+    });
+  }
+
   async function renderMermaidBlocks() {
     const blocks = Array.from(docEl.querySelectorAll("pre code.language-mermaid"));
     for (const [idx, code] of blocks.entries()) {
@@ -1137,6 +1226,7 @@ export abstract class BaseModel {
         wrap.innerHTML = `<pre style="color:var(--red)">Mermaid render error:\n${e.message}</pre>`;
       }
       code.parentElement.replaceWith(wrap);
+      fixNodeContrast(wrap); // wrap is now in the DOM → computed fills resolve
     }
     pairBeforeAfter();
   }
@@ -1157,7 +1247,7 @@ export abstract class BaseModel {
       widget.className = "ba-widget";
       widget.innerHTML = `
         <div class="ba-controls">
-          <div class="ba-label">Blast Radius</div>
+          <div class="ba-label">Call Graph</div>
           <div class="ba-tabs">
             <button class="ba-tab" data-state="before" type="button"><span class="ba-marker"></span>Before</button>
             <button class="ba-tab active" data-state="after" type="button"><span class="ba-marker"></span>After</button>
@@ -1309,22 +1399,42 @@ export abstract class BaseModel {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // Syntax-highlight a single diff line via Prism so the AFTER·DIFF view reads
-  // like the BEFORE view (token colors), not monochrome +/- text.
-  function highlightLine(text, lang) {
-    if (!text) return "";
-    const grammar = (lang && Prism.languages[lang]) || Prism.languages.typescript;
-    try { return Prism.highlight(text, grammar, lang || "typescript"); }
-    catch { return escapeHtml(text); }
+  // Highlight every non-diff code block under `el` with highlight.js, then
+  // transform any `code.ts-diff` blocks into GitHub-PR-style +/- line rows.
+  function hlAll(el) {
+    el.querySelectorAll("pre code:not(.ts-diff)").forEach((c) => {
+      if (!c.classList.contains("hljs")) hljs.highlightElement(c);
+    });
+    el.querySelectorAll("code.ts-diff").forEach(renderTsDiff);
   }
 
+  // Source-faithful diff: one row per line, TS-tokenized, with a +/- gutter
+  // and GitHub-PR green/red line background.
+  function renderTsDiff(code) {
+    if (code.dataset.tsDiffDone === "1") return;
+    const lines = code.textContent.replace(/\n$/, "").split("\n");
+    code.innerHTML = lines.map((line) => {
+      const first = line.charAt(0);
+      const isAdd = first === "+", isDel = first === "-";
+      const sign = isAdd ? "+" : isDel ? "-" : " ";
+      const body = (isAdd || isDel) ? line.slice(1) : line;
+      const cls = isAdd ? "diff-add" : isDel ? "diff-del" : "diff-ctx";
+      const html = hljs.highlight(body, { language: "typescript", ignoreIllegals: true }).value;
+      return '<span class="diff-line ' + cls + '"><span class="diff-gutter">' + sign + "</span>" + html + "</span>";
+    }).join("");
+    code.dataset.tsDiffDone = "1";
+  }
+
+  // Drawer AFTER·DIFF view: render a before→after LCS diff as ts-diff rows.
   function renderDiffHtml(beforeText, afterText, lang) {
     const diff = lineDiff(beforeText, afterText);
-    const lines = diff.map(d => {
-      const sym = d.op === "ins" ? "+" : d.op === "del" ? "-" : " ";
-      return `<span class="line line-${d.op}"><span class="gutter">${sym}</span><span class="text">${highlightLine(d.text, lang)}</span></span>`;
-    }).join("\n");
-    return `<pre class="code-diff">${lines}</pre>`;
+    const rows = diff.map((d) => {
+      const sign = d.op === "ins" ? "+" : d.op === "del" ? "-" : " ";
+      const cls = d.op === "ins" ? "diff-add" : d.op === "del" ? "diff-del" : "diff-ctx";
+      const html = hljs.highlight(d.text || "", { language: "typescript", ignoreIllegals: true }).value;
+      return '<span class="diff-line ' + cls + '"><span class="diff-gutter">' + sign + "</span>" + html + "</span>";
+    }).join("");
+    return '<pre><code class="ts-diff">' + rows + "</code></pre>";
   }
 
   // Read the language-xxx class off a stored REF block (defaults to typescript).
@@ -1368,11 +1478,11 @@ export abstract class BaseModel {
     if (!after) {
       // Only one variant — show it directly, no tabs needed
       bodyEl.innerHTML = (before || ref.blocks[0]).html;
-      Prism.highlightAllUnder(bodyEl);
+      hlAll(bodyEl);
     } else if (!before) {
       // Only an extended block (rare) — show it as plain code
       bodyEl.innerHTML = after.html;
-      Prism.highlightAllUnder(bodyEl);
+      hlAll(bodyEl);
     } else {
       // Both present — render tabs + diff for AFTER
       const beforeSrc = blockSource(before);
@@ -1384,7 +1494,7 @@ export abstract class BaseModel {
           b.classList.toggle("active", b.dataset.which === which));
         if (which === "before") {
           bodyEl.innerHTML = before.html;
-          Prism.highlightAllUnder(bodyEl);
+          hlAll(bodyEl);
         } else {
           bodyEl.innerHTML = diffHtml;
         }
@@ -1434,14 +1544,14 @@ export abstract class BaseModel {
     // 3. Build sidebar TOC, render mermaid, highlight code.
     buildTOC();
     await renderMermaidBlocks();
-    Prism.highlightAllUnder(docEl);
+    hlAll(docEl);
 
     // 4. Index the Code Reference Library and wire inline code clicks.
     codeRefIndex = buildCodeRefIndex();
     wireCodeRefs();
 
     // 5. Apply approval status from the banner's data-status attribute.
-    const status = document.getElementById("classification").dataset.status || "AWAITING APPROVAL";
+    const status = (document.getElementById("doc-badge") || {}).dataset?.status || "AWAITING APPROVAL";
     applyStatus(status);
   }
 
